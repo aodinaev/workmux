@@ -1,10 +1,10 @@
 ---
-description: Exit tracked agent panes older than a configured age
+description: Exit tracked agent processes older than a configured age
 ---
 
 # reap-agents
 
-Exit tracked agent panes whose last state update is older than a threshold.
+Exit tracked agent processes whose last state update is older than a threshold.
 
 ```bash
 workmux reap-agents
@@ -13,8 +13,8 @@ workmux reap-agents --hours 24 --force
 ```
 
 By default, the command prints matching agents without exiting them. It still
-reconciles workmux state while checking live panes. Pass `--force` to close
-matching panes and remove their workmux agent state.
+reconciles workmux state while checking live panes. Pass `--force` to interrupt
+matching agents and remove their workmux agent state after they exit.
 
 ## Options
 

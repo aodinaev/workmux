@@ -283,7 +283,7 @@ Agent interaction:
   capture      Capture terminal output from a running agent
   wait         Wait for agents to reach a target status
   run          Run a command in a worktree's window
-  reap-agents  Exit tracked agent panes older than a configured age
+  reap-agents  Exit tracked agent processes older than a configured age
 
 Help and updates:
   docs         Show detailed documentation (renders README.md)
@@ -636,7 +636,7 @@ enum Commands {
         timeout: Option<u64>,
     },
 
-    /// Exit tracked agent panes older than a configured age
+    /// Exit tracked agent processes older than a configured age
     #[command(name = "reap-agents")]
     ReapAgents {
         /// Age threshold in hours

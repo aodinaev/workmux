@@ -529,7 +529,7 @@ alias wm='workmux'
 - [`path`](#workmux-path-name) - Get the filesystem path of a worktree
 - [`dashboard`](#workmux-dashboard) - Show TUI dashboard of all active agents
 - [`sidebar`](#workmux-sidebar) - Toggle a compact agent status sidebar in tmux
-- [`reap-agents`](#workmux-reap-agents) - Exit tracked agent panes older than a threshold
+- [`reap-agents`](#workmux-reap-agents) - Exit tracked agent processes older than a threshold
 - [`config edit`](#workmux-config-edit) - Edit the global configuration file
 - [`init`](#workmux-init) - Generate configuration file
 - [`sandbox`](#workmux-sandbox) - Manage sandbox backends (container/Lima)
@@ -1747,7 +1747,7 @@ Then press `prefix + Ctrl-t` to toggle the sidebar.
 
 ### `workmux reap-agents`
 
-Shows tracked agent panes whose last state update is older than a threshold.
+Shows tracked agent processes whose last state update is older than a threshold.
 By default this is a dry run, though it still reconciles workmux state while
 checking live panes.
 
@@ -1757,7 +1757,8 @@ workmux reap-agents --hours 48
 workmux reap-agents --hours 24 --force
 ```
 
-Use `--force` to close matching panes and remove their workmux agent state.
+Use `--force` to interrupt matching agents and remove their workmux agent state
+after they exit.
 
 ---
 

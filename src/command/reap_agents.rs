@@ -1,8 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 
-use crate::multiplexer::{AgentPane, AgentStatus, create_backend, detect_backend};
+use crate::multiplexer::{AgentPane, AgentStatus, Multiplexer, create_backend, detect_backend};
 use crate::state::{PaneKey, StateStore};
 use crate::util;
 
@@ -34,7 +35,7 @@ pub fn run(older_than_secs: u64, force: bool) -> Result<()> {
         let title = agent.pane_title.as_deref().unwrap_or("-");
 
         if force {
-            match mux.kill_pane(&agent.pane_id) {
+            match exit_agent(mux.as_ref(), agent) {
                 Ok(()) => {
                     let key = PaneKey {
                         backend: backend.clone(),
@@ -80,6 +81,41 @@ pub fn run(older_than_secs: u64, force: bool) -> Result<()> {
     } else {
         Err(anyhow!("failed to exit {} agent(s)", failures.len()))
     }
+}
+
+fn exit_agent(mux: &dyn Multiplexer, agent: &AgentPane) -> Result<()> {
+    let original_command = mux
+        .get_live_pane_info(&agent.pane_id)?
+        .and_then(|live| live.current_command);
+
+    mux.send_key(&agent.pane_id, "C-c")?;
+    if wait_for_agent_exit(mux, &agent.pane_id, original_command.as_deref())? {
+        return Ok(());
+    }
+
+    mux.send_key(&agent.pane_id, "C-d")?;
+    if wait_for_agent_exit(mux, &agent.pane_id, original_command.as_deref())? {
+        return Ok(());
+    }
+
+    Err(anyhow!("agent did not exit after C-c and C-d"))
+}
+
+fn wait_for_agent_exit(
+    mux: &dyn Multiplexer,
+    pane_id: &str,
+    original_command: Option<&str>,
+) -> Result<bool> {
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(100));
+        let Some(live) = mux.get_live_pane_info(pane_id)? else {
+            return Ok(true);
+        };
+        if live.current_command.as_deref() != original_command {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn now_secs() -> u64 {
