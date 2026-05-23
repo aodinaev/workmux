@@ -408,6 +408,42 @@ impl Multiplexer for TmuxBackend {
         self.run_shell(script)
     }
 
+    fn current_window_id(&self) -> Result<Option<String>> {
+        let Some(pane_id) = self.current_pane_id() else {
+            return Ok(None);
+        };
+        match self.tmux_query(&["display-message", "-p", "-t", &pane_id, "#{window_id}"]) {
+            Ok(id) => Ok(Some(id.trim().to_string()).filter(|s| !s.is_empty())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn current_session_id(&self) -> Result<Option<String>> {
+        let Some(pane_id) = self.current_pane_id() else {
+            return Ok(None);
+        };
+        match self.tmux_query(&["display-message", "-p", "-t", &pane_id, "#{session_id}"]) {
+            Ok(id) => Ok(Some(id.trim().to_string()).filter(|s| !s.is_empty())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn shell_close_window_by_id_guard_cmd(&self, id: &str) -> Result<String> {
+        let escaped = Self::shell_escape(id);
+        Ok(format!(
+            "tmux display-message -p -t {target} '#{{window_id}}' >/dev/null 2>&1 && tmux kill-window -t {target} >/dev/null 2>&1 || true",
+            target = escaped
+        ))
+    }
+
+    fn shell_close_session_by_id_guard_cmd(&self, id: &str) -> Result<String> {
+        let escaped = Self::shell_escape(id);
+        Ok(format!(
+            "tmux has-session -t {target} >/dev/null 2>&1 && tmux kill-session -t {target} >/dev/null 2>&1 || true",
+            target = escaped
+        ))
+    }
+
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
         let session = self.current_session().unwrap_or_default();
         let session_prefix = if session.is_empty() {
@@ -485,14 +521,18 @@ impl Multiplexer for TmuxBackend {
     }
 
     fn current_window_name(&self) -> Result<Option<String>> {
-        match self.tmux_query(&["display-message", "-p", "#{window_name}"]) {
-            Ok(name) => Ok(Some(name.trim().to_string())),
+        let Some(pane_id) = self.current_pane_id() else {
+            return Ok(None);
+        };
+        match self.tmux_query(&["display-message", "-p", "-t", &pane_id, "#{window_name}"]) {
+            Ok(name) => Ok(Some(name.trim().to_string()).filter(|s| !s.is_empty())),
             Err(_) => Ok(None),
         }
     }
 
     fn current_session(&self) -> Option<String> {
-        self.tmux_query(&["display-message", "-p", "#{session_name}"])
+        let pane_id = self.current_pane_id()?;
+        self.tmux_query(&["display-message", "-p", "-t", &pane_id, "#{session_name}"])
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())

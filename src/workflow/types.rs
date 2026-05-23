@@ -95,6 +95,7 @@ pub struct CleanupResult {
     /// The actual window name to close later (when running inside a duplicate window)
     pub window_to_close_later: Option<String>,
     pub window_target_to_close_later: Option<WindowTarget>,
+    pub target_id_to_close_later: Option<String>,
     /// Trash directory path to delete after window close (deferred to avoid race condition)
     pub trash_path_to_delete: Option<PathBuf>,
     /// Full cleanup deferred until after window close (rename + prune + branch delete).

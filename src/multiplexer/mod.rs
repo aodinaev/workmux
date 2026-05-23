@@ -39,6 +39,30 @@ pub trait Multiplexer: Send + Sync {
     /// Check if the multiplexer server is running
     fn is_running(&self) -> Result<bool>;
 
+    fn current_window_id(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn current_session_id(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn shell_close_window_by_id_guard_cmd(&self, id: &str) -> Result<String> {
+        let _ = id;
+        Err(anyhow!(
+            "Closing windows by stable ID is not supported by the {} backend",
+            self.name()
+        ))
+    }
+
+    fn shell_close_session_by_id_guard_cmd(&self, id: &str) -> Result<String> {
+        let _ = id;
+        Err(anyhow!(
+            "Closing sessions by stable ID is not supported by the {} backend",
+            self.name()
+        ))
+    }
+
     /// Get the current pane ID from environment (TMUX_PANE or WEZTERM_PANE)
     fn current_pane_id(&self) -> Option<String>;
 

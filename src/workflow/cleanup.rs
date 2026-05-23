@@ -115,9 +115,12 @@ fn is_inside_matching_target(
     target_name: &str,
     mode: MuxMode,
     parent_session: Option<&str>,
-) -> Result<Option<String>> {
-    let current_name = if mode == MuxMode::Session {
-        mux.current_session()
+) -> Result<Option<(String, Option<String>)>> {
+    let (current_name, current_id) = if mode == MuxMode::Session {
+        (
+            mux.current_session(),
+            mux.current_session_id().unwrap_or(None),
+        )
     } else {
         if let Some(parent) = parent_session {
             match mux.current_session() {
@@ -125,7 +128,10 @@ fn is_inside_matching_target(
                 _ => return Ok(None),
             }
         }
-        mux.current_window_name()?
+        (
+            mux.current_window_name()?,
+            mux.current_window_id().unwrap_or(None),
+        )
     };
 
     let current_name = match current_name {
@@ -139,7 +145,7 @@ fn is_inside_matching_target(
     let re = Regex::new(&pattern).expect("Invalid regex pattern");
 
     if re.is_match(&current_name) {
-        Ok(Some(current_name))
+        Ok(Some((current_name, current_id)))
     } else {
         Ok(None)
     }
@@ -208,6 +214,7 @@ pub fn cleanup(
         local_branch_deleted: false,
         window_to_close_later: None,
         window_target_to_close_later: None,
+        target_id_to_close_later: None,
         trash_path_to_delete: None,
         deferred_cleanup: None,
     };
@@ -385,7 +392,7 @@ pub fn cleanup(
     };
 
     if running_inside_target {
-        let current_target = current_matching_target.unwrap();
+        let (current_target, current_target_id) = current_matching_target.unwrap();
         info!(
             branch = branch_name,
             current_target = current_target,
@@ -425,6 +432,7 @@ pub fn cleanup(
 
         // Store the current window/session name for deferred close
         result.window_to_close_later = Some(current_target.clone());
+        result.target_id_to_close_later = current_target_id;
         if !is_session_mode {
             result.window_target_to_close_later =
                 Some(WindowTarget::new(current_target, parent_session.clone()));
@@ -698,16 +706,27 @@ pub fn navigate_to_target_and_close(
 
     // Generate backend-specific shell commands for deferred scripts.
     // Kill uses source mode, select uses target's detected mode.
-    let kill_source_cmd = if mode == MuxMode::Window {
-        cleanup_result
-            .window_target_to_close_later
-            .as_ref()
-            .map(|target| MuxHandle::shell_kill_window_target_cmd(mux, target))
-            .unwrap_or_else(|| MuxHandle::shell_kill_cmd_full(mux, mode, &source_full))
-            .ok()
-    } else {
-        MuxHandle::shell_kill_cmd_full(mux, mode, &source_full).ok()
-    };
+    let kill_source_cmd = cleanup_result
+        .target_id_to_close_later
+        .as_deref()
+        .and_then(|id| {
+            if mode == MuxMode::Window {
+                mux.shell_close_window_by_id_guard_cmd(id).ok()
+            } else {
+                mux.shell_close_session_by_id_guard_cmd(id).ok()
+            }
+        })
+        .or_else(|| {
+            if mode == MuxMode::Window {
+                cleanup_result
+                    .window_target_to_close_later
+                    .as_ref()
+                    .and_then(|target| MuxHandle::shell_kill_window_target_cmd(mux, target).ok())
+                    .or_else(|| MuxHandle::shell_kill_cmd_full(mux, mode, &source_full).ok())
+            } else {
+                MuxHandle::shell_kill_cmd_full(mux, mode, &source_full).ok()
+            }
+        });
     let select_target_cmd = MuxHandle::shell_select_cmd_full(mux, target_mode, &target_full).ok();
 
     debug!(
@@ -750,17 +769,23 @@ pub fn navigate_to_target_and_close(
                 String::new()
             };
 
-            let kill_part = kill_source_cmd
+            let cleanup_body = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script);
+            let close_and_cleanup = kill_source_cmd
                 .as_ref()
-                .map(|cmd| format!("{}; ", cmd))
-                .unwrap_or_default();
+                .map(|cmd| {
+                    if cleanup_body.is_empty() {
+                        cmd.to_string()
+                    } else {
+                        format!("{} && {}", cmd, cleanup_body)
+                    }
+                })
+                .unwrap_or_else(|| cleanup_body.to_string());
 
             let script = format!(
-                "sleep {delay}; {switch}{kill}{cleanup}",
+                "sleep {delay}; {switch}{close_and_cleanup}",
                 delay = delay_secs,
                 switch = switch_last_part,
-                kill = kill_part,
-                cleanup = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script),
+                close_and_cleanup = close_and_cleanup,
             );
             debug!(
                 script = script,
@@ -806,17 +831,23 @@ pub fn navigate_to_target_and_close(
             .map(|cmd| format!("{}; ", cmd))
             .unwrap_or_default();
 
-        let kill_part = kill_source_cmd
+        let cleanup_body = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script);
+        let close_and_cleanup = kill_source_cmd
             .as_ref()
-            .map(|cmd| format!("{}; ", cmd))
-            .unwrap_or_default();
+            .map(|cmd| {
+                if cleanup_body.is_empty() {
+                    cmd.to_string()
+                } else {
+                    format!("{} && {}", cmd, cleanup_body)
+                }
+            })
+            .unwrap_or_else(|| cleanup_body.to_string());
 
         let script = format!(
-            "sleep {delay}; {select}{kill}{cleanup}",
+            "sleep {delay}; {select}{close_and_cleanup}",
             delay = delay_secs,
             select = select_part,
-            kill = kill_part,
-            cleanup = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script),
+            close_and_cleanup = close_and_cleanup,
         );
         debug!(
             script = script,

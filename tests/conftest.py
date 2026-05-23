@@ -1779,19 +1779,24 @@ def run_workmux_remove(
     all_flag = "--all " if all else ""
     branch_arg = branch_name if branch_name else ""
     input_cmd = f"echo '{user_input}' | " if user_input else ""
+    started_file: Optional[Path] = None
 
-    # If from_window is specified, we need to change to that window's working directory
     if from_window:
         worktree_path = get_worktree_path(
             repo_path, from_window.replace(DEFAULT_WINDOW_PREFIX, "")
         )
+        started_file = scripts_dir / "workmux_remove_started.txt"
+        if started_file.exists():
+            started_file.unlink()
         remove_script = (
-            f"cd {worktree_path} && "
+            f"echo started > {shlex.quote(str(started_file))}; "
+            f"cd {shlex.quote(str(worktree_path))} && "
             f"{input_cmd}"
-            f"{workmux_exe_path} remove {force_flag}{keep_branch_flag}{gone_flag}{all_flag}{branch_arg} "
-            f"> {stdout_file} 2> {stderr_file}; "
-            f"echo $? > {exit_code_file}"
+            f"{shlex.quote(str(workmux_exe_path))} remove {force_flag}{keep_branch_flag}{gone_flag}{all_flag}{branch_arg} "
+            f"> {shlex.quote(str(stdout_file))} 2> {shlex.quote(str(stderr_file))}; "
+            f"echo $? > {shlex.quote(str(exit_code_file))}"
         )
+        env.send_keys(from_window, remove_script)
     else:
         remove_script = (
             f"cd {repo_path} && "
@@ -1801,7 +1806,25 @@ def run_workmux_remove(
             f"echo $? > {exit_code_file}"
         )
 
-    env.run_shell_background(remove_script)
+        env.run_shell_background(remove_script)
+
+    if from_window:
+        assert started_file is not None
+        assert poll_until_file_has_content(started_file, timeout=5.0), (
+            "workmux remove did not start in target window"
+        )
+        if not expect_fail:
+            assert poll_until(
+                lambda: from_window not in env.list_windows(), timeout=15.0
+            ), "workmux remove did not close the target window"
+            branch_for_path = branch_name or from_window.replace(
+                DEFAULT_WINDOW_PREFIX, ""
+            )
+            worktree_path = get_worktree_path(repo_path, branch_for_path)
+            assert poll_until(lambda: not worktree_path.exists(), timeout=15.0), (
+                "workmux remove did not remove the worktree"
+            )
+            return
 
     # Wait for command to complete (longer timeout for --gone which runs git fetch)
     assert poll_until_file_has_content(exit_code_file, timeout=15.0), (

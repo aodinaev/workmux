@@ -276,6 +276,30 @@ def test_remove_missing_admin_dir_rejects_plain_directory(
     assert plain_dir.exists(), "Plain directory should not be removed"
 
 
+@pytest.mark.tmux_only
+def test_remove_external_command_ignores_active_client_window(
+    mux_server: TmuxEnvironment, workmux_exe_path: Path, mux_repo_path: Path
+):
+    env = mux_server
+    branch_name = "external-active-target"
+    window_name = get_window_name(branch_name)
+    write_workmux_config(mux_repo_path)
+    run_workmux_add(env, workmux_exe_path, mux_repo_path, branch_name)
+
+    worktree_path = get_worktree_path(mux_repo_path, branch_name)
+    env.select_window(window_name)
+
+    run_workmux_remove(
+        env,
+        workmux_exe_path,
+        mux_repo_path,
+        branch_name,
+        force=True,
+    )
+    assert not worktree_path.exists(), "Worktree should be removed"
+    assert window_name not in env.list_windows(), "Window should be closed"
+
+
 def test_remove_from_within_worktree_window_without_branch_arg(
     mux_server: MuxEnvironment, workmux_exe_path: Path, mux_repo_path: Path
 ):
