@@ -84,3 +84,35 @@ workmux completions fish | source
 ```
 
 :::
+
+## Uninstalling
+
+### Automatic (recommended)
+
+Run the uninstall script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/raine/workmux/main/scripts/uninstall.sh | bash
+```
+
+If installed via [Homebrew](#homebrew-macoslinux), also run:
+
+```bash
+brew uninstall workmux
+brew untap raine/workmux
+```
+
+If installed via [Cargo](#cargo), also run:
+
+```bash
+cargo uninstall workmux
+```
+
+### Manual
+
+1. Remove hooks and skills: `workmux uninstall`
+2. Remove the binary from `/usr/local/bin`, `~/.local/bin`, or `~/.cargo/bin`
+3. Remove cache and state: `rm -rf ~/.cache/workmux ~/.local/state/workmux`
+4. Optionally remove config: `rm -rf ~/.config/workmux`
+5. Remove shell completions and `alias wm=workmux` from your shell config
+6. Clean up worktrees with `git worktree list` / `git worktree remove`

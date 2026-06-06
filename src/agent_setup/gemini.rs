@@ -9,6 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::StatusCheck;
+use crate::agent_setup::hooks;
 
 /// Hooks configuration embedded at compile time.
 const HOOKS_JSON: &str = include_str!("../../resources/gemini/settings.json");
@@ -43,38 +44,43 @@ pub fn check() -> Result<StatusCheck> {
     let config: Value =
         serde_json::from_str(&content).context("~/.gemini/settings.json is not valid JSON")?;
 
-    if has_workmux_hooks(&config) {
+    if hooks::has_workmux_hooks(&config) {
         Ok(StatusCheck::Installed)
     } else {
         Ok(StatusCheck::NotInstalled)
     }
 }
 
-/// Check if the hooks object contains any workmux set-window-status commands.
-fn has_workmux_hooks(config: &Value) -> bool {
-    let Some(hooks) = config.get("hooks").and_then(|v| v.as_object()) else {
-        return false;
+/// Remove workmux hooks from Gemini CLI settings.json.
+///
+/// Uses shared JSON helpers to surgically remove only workmux entries,
+/// preserving any user-configured hooks. Returns a description of what
+/// was done.
+pub fn uninstall() -> Result<String> {
+    let Some(path) = settings_path() else {
+        return Ok("Gemini CLI config dir not found, nothing to uninstall".to_string());
     };
-
-    for (_event, groups) in hooks {
-        let Some(groups_arr) = groups.as_array() else {
-            continue;
-        };
-        for group in groups_arr {
-            let Some(hook_list) = group.get("hooks").and_then(|v| v.as_array()) else {
-                continue;
-            };
-            for hook in hook_list {
-                if let Some(cmd) = hook.get("command").and_then(|v| v.as_str())
-                    && cmd.contains("workmux set-window-status")
-                {
-                    return true;
-                }
-            }
-        }
+    if !path.exists() {
+        return Ok("No Gemini CLI settings.json found".to_string());
     }
 
-    false
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(mut settings) = serde_json::from_str::<Value>(&content) {
+            let removed = hooks::remove_workmux_hooks(&mut settings);
+            hooks::remove_empty_hooks_wrapper(&mut settings);
+
+            if removed {
+                fs::write(&path, serde_json::to_string_pretty(&settings)? + "\n")?;
+                Ok(format!("Removed workmux hooks from {}", path.display()))
+            } else {
+                Ok("No workmux hooks found in Gemini CLI settings".to_string())
+            }
+        } else {
+            Ok("Could not parse Gemini CLI settings.json".to_string())
+        }
+    } else {
+        Ok("Could not read Gemini CLI settings.json".to_string())
+    }
 }
 
 /// Load the hooks portion from the embedded config.
@@ -172,42 +178,6 @@ mod tests {
     #[test]
     fn test_hooks_json_contains_workmux_command() {
         assert!(HOOKS_JSON.contains("workmux set-window-status"));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_empty() {
-        let config = json!({});
-        assert!(!has_workmux_hooks(&config));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_present() {
-        let config = json!({
-            "hooks": {
-                "AfterAgent": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "workmux set-window-status done"
-                    }]
-                }]
-            }
-        });
-        assert!(has_workmux_hooks(&config));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_other_hooks_only() {
-        let config = json!({
-            "hooks": {
-                "AfterAgent": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "python3 my-script.py"
-                    }]
-                }]
-            }
-        });
-        assert!(!has_workmux_hooks(&config));
     }
 
     #[test]

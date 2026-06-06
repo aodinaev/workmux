@@ -83,6 +83,33 @@ pub fn install() -> Result<String> {
     ))
 }
 
+/// Remove workmux hooks for Copilot CLI from the current repo.
+///
+/// Deletes the `.github/hooks/workmux-status/` directory tree (wholly
+/// created by workmux, no merge needed). Cleans up empty parent dirs.
+pub fn uninstall() -> Result<String> {
+    let root = match crate::git::get_repo_root() {
+        Ok(r) => r,
+        Err(_) => return Ok("Not in a git repository, nothing to uninstall".to_string()),
+    };
+
+    let hooks_dir = root.join(".github/hooks/workmux-status");
+    if hooks_dir.exists() {
+        fs::remove_dir_all(&hooks_dir)?;
+        // Remove .github/hooks/ if now empty
+        let hooks_parent = root.join(".github/hooks");
+        if hooks_parent
+            .read_dir()
+            .is_ok_and(|mut it| it.next().is_none())
+        {
+            let _ = fs::remove_dir(&hooks_parent);
+        }
+        Ok("Removed .github/hooks/workmux-status/ from current repo".to_string())
+    } else {
+        Ok("No Copilot hooks found in current repo".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

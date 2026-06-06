@@ -9,6 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::StatusCheck;
+use crate::agent_setup::hooks;
 
 /// Hooks extracted from `.claude-plugin/plugin.json` at compile time.
 const PLUGIN_JSON: &str = include_str!("../../.claude-plugin/plugin.json");
@@ -70,38 +71,39 @@ fn check_settings(settings: &Value) -> StatusCheck {
     }
 
     // Check for manual hooks by traversing the hooks structure
-    if has_workmux_hooks(settings) {
+    if hooks::has_workmux_hooks(settings) {
         return StatusCheck::Installed;
     }
 
     StatusCheck::NotInstalled
 }
 
-/// Check if the hooks object contains any workmux set-window-status commands.
-fn has_workmux_hooks(settings: &Value) -> bool {
-    let Some(hooks) = settings.get("hooks").and_then(|v| v.as_object()) else {
-        return false;
+/// Remove workmux hooks from Claude Code settings.json.
+///
+/// Uses shared JSON helpers to surgically remove only workmux entries,
+/// preserving any user-configured hooks. Returns a description of what
+/// was done.
+pub fn uninstall() -> Result<String> {
+    let Some(path) = settings_path() else {
+        return Ok("Claude Code config dir not found, nothing to uninstall".to_string());
     };
-
-    for (_event, groups) in hooks {
-        let Some(groups_arr) = groups.as_array() else {
-            continue;
-        };
-        for group in groups_arr {
-            let Some(hook_list) = group.get("hooks").and_then(|v| v.as_array()) else {
-                continue;
-            };
-            for hook in hook_list {
-                if let Some(cmd) = hook.get("command").and_then(|v| v.as_str())
-                    && cmd.contains("workmux set-window-status")
-                {
-                    return true;
-                }
-            }
-        }
+    if !path.exists() {
+        return Ok("No Claude Code settings.json found".to_string());
     }
 
-    false
+    let content = fs::read_to_string(&path)?;
+    let mut settings: Value = serde_json::from_str(&content)?;
+
+    let removed = hooks::remove_workmux_hooks(&mut settings);
+    let plugins_removed = hooks::remove_workmux_plugins(&mut settings);
+    hooks::remove_empty_hooks_wrapper(&mut settings);
+
+    if removed || plugins_removed {
+        fs::write(&path, serde_json::to_string_pretty(&settings)? + "\n")?;
+        Ok(format!("Removed workmux hooks from {}", path.display()))
+    } else {
+        Ok("No workmux hooks found in Claude Code settings".to_string())
+    }
 }
 
 /// Extract the hooks object from the plugin.json manifest.
@@ -183,42 +185,6 @@ pub fn install() -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn test_has_workmux_hooks_empty() {
-        let settings = json!({});
-        assert!(!has_workmux_hooks(&settings));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_present() {
-        let settings = json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "workmux set-window-status done"
-                    }]
-                }]
-            }
-        });
-        assert!(has_workmux_hooks(&settings));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_other_hooks_only() {
-        let settings = json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "afplay /System/Library/Sounds/Glass.aiff"
-                    }]
-                }]
-            }
-        });
-        assert!(!has_workmux_hooks(&settings));
-    }
 
     #[test]
     fn test_load_hooks_from_plugin() {

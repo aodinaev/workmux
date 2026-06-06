@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod gemini;
+pub mod hooks;
 pub mod opencode;
 pub mod pi;
 
@@ -41,6 +42,19 @@ impl Agent {
             Agent::OpenCode => "OpenCode",
             Agent::Pi => "pi",
         }
+    }
+
+    /// All known agent variants. Used by uninstall to attempt cleanup
+    /// even when the agent CLI is no longer detected.
+    pub fn all() -> Vec<Agent> {
+        vec![
+            Agent::Claude,
+            Agent::Codex,
+            Agent::Copilot,
+            Agent::Gemini,
+            Agent::OpenCode,
+            Agent::Pi,
+        ]
     }
 }
 
@@ -153,6 +167,18 @@ pub fn install(agent: Agent) -> Result<String> {
         Agent::Gemini => gemini::install(),
         Agent::OpenCode => opencode::install(),
         Agent::Pi => pi::install(),
+    }
+}
+
+/// Remove status tracking hooks for the given agent.
+pub fn uninstall_one(agent: Agent) -> Result<String> {
+    match agent {
+        Agent::Claude => claude::uninstall(),
+        Agent::Codex => codex::uninstall(),
+        Agent::Copilot => copilot::uninstall(),
+        Agent::Gemini => gemini::uninstall(),
+        Agent::OpenCode => opencode::uninstall(),
+        Agent::Pi => pi::uninstall(),
     }
 }
 

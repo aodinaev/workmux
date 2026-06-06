@@ -669,6 +669,14 @@ enum Commands {
         skills: bool,
     },
 
+    /// Remove agent status tracking hooks, skills, and cache/state dirs
+    #[command(hide = true)]
+    Uninstall {
+        /// Show what would be removed without actually removing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show detailed documentation (renders README.md)
     Docs,
 
@@ -1077,6 +1085,7 @@ pub fn run() -> Result<()> {
         Commands::SyncFiles { all } => command::sync_files::run(all),
         Commands::Init => crate::config::Config::init(),
         Commands::Setup { hooks, skills } => command::setup::run(hooks, skills),
+        Commands::Uninstall { dry_run } => command::uninstall::run(dry_run),
         Commands::Docs => command::docs::run(),
         Commands::Changelog => command::changelog::run(),
         Commands::Update => command::update::run(),

@@ -67,3 +67,23 @@ pub fn install() -> Result<String> {
         path.display()
     ))
 }
+
+/// Remove workmux extension for pi agent.
+///
+/// Deletes the extension file and cleans up empty parent directories.
+pub fn uninstall() -> Result<String> {
+    let Some(path) = extension_path() else {
+        return Ok("pi config dir not found, nothing to uninstall".to_string());
+    };
+    if !path.exists() {
+        return Ok("No pi extension found".to_string());
+    }
+    fs::remove_file(&path)?;
+    // Clean up empty extensions directory
+    if let Some(parent) = path.parent()
+        && parent.read_dir().is_ok_and(|mut it| it.next().is_none())
+    {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(format!("Removed pi extension at {}", path.display()))
+}

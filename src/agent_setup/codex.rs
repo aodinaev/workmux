@@ -15,6 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::StatusCheck;
+use crate::agent_setup::hooks;
 
 /// Hooks configuration embedded at compile time.
 const HOOKS_JSON: &str = include_str!("../../.codex/hooks/workmux-status.json");
@@ -49,38 +50,47 @@ pub fn check() -> Result<StatusCheck> {
     let config: Value =
         serde_json::from_str(&content).context("~/.codex/hooks.json is not valid JSON")?;
 
-    if has_workmux_hooks(&config) {
+    if hooks::has_workmux_hooks(&config) {
         Ok(StatusCheck::Installed)
     } else {
         Ok(StatusCheck::NotInstalled)
     }
 }
 
-/// Check if the hooks object contains any workmux set-window-status commands.
-fn has_workmux_hooks(config: &Value) -> bool {
-    let Some(hooks) = config.get("hooks").and_then(|v| v.as_object()) else {
-        return false;
+/// Remove workmux hooks from Codex hooks.json.
+///
+/// Removes only workmux hook entries from hooks.json. If the file
+/// becomes empty of all hooks, deletes it entirely. Preserves any
+/// user-configured hooks from other tools.
+pub fn uninstall() -> Result<String> {
+    let Some(path) = hooks_path() else {
+        return Ok("Codex dir not found, nothing to uninstall".to_string());
     };
 
-    for (_event, groups) in hooks {
-        let Some(groups_arr) = groups.as_array() else {
-            continue;
-        };
-        for group in groups_arr {
-            let Some(hook_list) = group.get("hooks").and_then(|v| v.as_array()) else {
-                continue;
-            };
-            for hook in hook_list {
-                if let Some(cmd) = hook.get("command").and_then(|v| v.as_str())
-                    && cmd.contains("workmux set-window-status")
-                {
-                    return true;
-                }
+    let mut messages = Vec::new();
+
+    if path.exists() {
+        let content = fs::read_to_string(&path)?;
+        let mut config: Value = serde_json::from_str(&content)?;
+
+        let removed = hooks::remove_workmux_hooks(&mut config);
+        hooks::remove_empty_hooks_wrapper(&mut config);
+
+        if removed {
+            // If hooks object is gone (empty after removal), delete the file
+            if config.get("hooks").is_none() {
+                fs::remove_file(&path)?;
+                messages.push(format!("Removed {} (no hooks remain)", path.display()));
+            } else {
+                fs::write(&path, serde_json::to_string_pretty(&config)? + "\n")?;
+                messages.push(format!("Removed workmux hooks from {}", path.display()));
             }
+        } else {
+            messages.push("No workmux hooks found in Codex hooks.json".to_string());
         }
     }
 
-    false
+    Ok(messages.join("; "))
 }
 
 /// Load the hooks portion from the embedded config.
@@ -259,42 +269,6 @@ mod tests {
     #[test]
     fn test_hooks_json_contains_workmux_command() {
         assert!(HOOKS_JSON.contains("workmux set-window-status"));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_empty() {
-        let config = json!({});
-        assert!(!has_workmux_hooks(&config));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_present() {
-        let config = json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "workmux set-window-status done"
-                    }]
-                }]
-            }
-        });
-        assert!(has_workmux_hooks(&config));
-    }
-
-    #[test]
-    fn test_has_workmux_hooks_other_hooks_only() {
-        let config = json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": "python3 my-script.py"
-                    }]
-                }]
-            }
-        });
-        assert!(!has_workmux_hooks(&config));
     }
 
     #[test]

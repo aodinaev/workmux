@@ -9,6 +9,7 @@
 //! OpenCode config directory.
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
@@ -90,4 +91,60 @@ pub fn install() -> Result<String> {
         package_json.display(),
         path.display()
     ))
+}
+
+/// Remove workmux plugin files from OpenCode config directory.
+///
+/// Removes plugin files from both new and legacy locations. For
+/// package.json, only removes it if it matches the bundled content
+/// exactly (preserving user-modified package.json).
+pub fn uninstall() -> Result<String> {
+    let mut removed = Vec::new();
+
+    // Remove plugin file (new location: plugins/workmux-status.ts)
+    if let Some(path) = plugin_path()
+        && path.exists()
+    {
+        fs::remove_file(&path)?;
+        removed.push(path.display().to_string());
+        // Clean up empty plugins directory
+        if let Some(parent) = path.parent()
+            && parent.read_dir().is_ok_and(|mut it| it.next().is_none())
+        {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+
+    // Remove legacy plugin file (plugin/workmux-status.ts)
+    if let Some(path) = legacy_plugin_path()
+        && path.exists()
+    {
+        fs::remove_file(&path)?;
+        removed.push(path.display().to_string());
+    }
+
+    // Handle package.json: only remove if it matches what we installed exactly
+    if let Some(pkg_path) = package_json_path()
+        && pkg_path.exists()
+    {
+        let content = fs::read_to_string(&pkg_path)?;
+        // Parse both as JSON for semantic comparison (ignores formatting)
+        if let (Ok(installed), Ok(existing)) = (
+            serde_json::from_str::<Value>(PACKAGE_JSON),
+            serde_json::from_str::<Value>(&content),
+        ) && installed == existing
+        {
+            fs::remove_file(&pkg_path)?;
+            removed.push(pkg_path.display().to_string());
+        }
+    }
+
+    if removed.is_empty() {
+        Ok("No OpenCode plugin files found".to_string())
+    } else {
+        Ok(format!(
+            "Removed OpenCode plugin files: {}",
+            removed.join(", ")
+        ))
+    }
 }

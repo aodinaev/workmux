@@ -29,6 +29,7 @@ pub mod setup;
 pub mod sidebar;
 pub mod status;
 pub mod sync_files;
+pub mod uninstall;
 pub mod update;
 pub mod wait;
 

@@ -198,6 +198,67 @@ fn print_skill_diff(name: &str, old: &str, new: &str) {
     println!();
 }
 
+/// Remove bundled skills for the given agent.
+///
+/// Only removes skill directories whose contents match the bundled
+/// version exactly. Modified skills are left in place.
+pub fn remove_skills(agent: Agent) -> Result<String> {
+    let Some(base_dir) = skills_dir(agent) else {
+        return Ok(format!("{} does not support skills", agent.name()));
+    };
+    if !base_dir.exists() {
+        return Ok(format!(
+            "No skills directory found at {}",
+            base_dir.display()
+        ));
+    }
+
+    let mut removed = 0u32;
+    let mut skipped = 0u32;
+
+    for skill in BUNDLED_SKILLS {
+        let path = base_dir.join(skill.name).join("SKILL.md");
+        if !path.exists() {
+            continue;
+        }
+        match fs::read_to_string(&path) {
+            Ok(content) if content == skill.content => {
+                let dir = path.parent().unwrap();
+                fs::remove_dir_all(dir)?;
+                removed += 1;
+            }
+            Ok(_) => {
+                // User-modified skill, leave it
+                skipped += 1;
+            }
+            Err(_) => continue,
+        }
+    }
+
+    // Remove skills base dir if empty
+    if base_dir.read_dir().is_ok_and(|mut it| it.next().is_none()) {
+        let _ = fs::remove_dir(&base_dir);
+    }
+
+    let mut parts = Vec::new();
+    if removed > 0 {
+        parts.push(format!("{removed} removed"));
+    }
+    if skipped > 0 {
+        parts.push(format!("{skipped} skipped (modified)"));
+    }
+    if removed == 0 && skipped == 0 {
+        parts.push("none found".to_string());
+    }
+
+    Ok(format!(
+        "Skills for {} ({}): {}",
+        agent.name(),
+        base_dir.display(),
+        parts.join(", ")
+    ))
+}
+
 fn confirm_overwrite(name: &str) -> Result<bool> {
     let prompt = format!(
         "  Overwrite {}/SKILL.md with bundled version? {}{}{} ",
