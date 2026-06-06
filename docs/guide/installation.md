@@ -110,9 +110,8 @@ cargo uninstall workmux
 
 ### Manual
 
-1. Run the uninstall script or call `workmux uninstall` if the binary is still available
+1. Remove hooks, skills, cache and state by running the uninstall script, or delete workmux data directly: `rm -rf ~/.cache/workmux ~/.local/state/workmux`
 2. Remove the binary from `/usr/local/bin`, `~/.local/bin`, or `~/.cargo/bin`
-3. Remove cache and state: `rm -rf ~/.cache/workmux ~/.local/state/workmux`
-4. Optionally remove config: `rm -rf ~/.config/workmux`
-5. Remove shell completions and `alias wm=workmux` from your shell config
-6. Clean up worktrees with `git worktree list` / `git worktree remove`
+3. Optionally remove config: `rm -rf ~/.config/workmux`
+4. Remove shell completions and `alias wm=workmux` from your shell config
+5. Clean up worktrees with `git worktree list` / `git worktree remove`
