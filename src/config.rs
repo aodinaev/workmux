@@ -1749,6 +1749,7 @@ impl SandboxConfig {
                 "codex" => Some(home.join(".codex")),
                 "opencode" => Some(home.join(".local/share/opencode")),
                 "pi" => Some(home.join(".pi/agent")),
+                "omp" => Some(home.join(".omp/agent")),
                 _ => None,
             }
         }
@@ -4182,6 +4183,8 @@ extra_mounts:
         let dir = config.resolved_agent_config_dir("claude").unwrap();
         let home = home::home_dir().unwrap();
         assert_eq!(dir, home.join(".claude"));
+        let dir = config.resolved_agent_config_dir("omp").unwrap();
+        assert_eq!(dir, home.join(".omp/agent"));
     }
 
     #[test]

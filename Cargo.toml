@@ -18,6 +18,7 @@ include = [
     "/resources/opencode/**/*",
     "/resources/gemini/**/*",
     "/.pi/extensions/**/*",
+    "/.omp/extensions/**/*",
     "/Cargo.toml",
     "/Cargo.lock",
     "/CHANGELOG.md",

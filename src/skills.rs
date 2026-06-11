@@ -71,6 +71,7 @@ fn skills_dir_with_env(
                 .unwrap_or_else(|| home.join(".pi/agent"));
             Some(pi_dir.join("skills"))
         }
+        Agent::Omp => Some(home.join(".omp/agent/skills")),
         Agent::Codex | Agent::Copilot | Agent::Gemini => None,
     }
 }
@@ -355,6 +356,13 @@ mod tests {
         let dir = skills_dir_with_env(Agent::Pi, Path::new("/home/test"), |_| None).unwrap();
 
         assert_eq!(dir, PathBuf::from("/home/test/.pi/agent/skills"));
+    }
+
+    #[test]
+    fn test_skills_dir_omp() {
+        let dir = skills_dir_with_env(Agent::Omp, Path::new("/home/test"), |_| None).unwrap();
+
+        assert_eq!(dir, PathBuf::from("/home/test/.omp/agent/skills"));
     }
 
     #[test]

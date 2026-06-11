@@ -22,6 +22,10 @@ description: Release notes and version history for workmux
 
 # Changelog
 
+## Unreleased
+
+- Add first-party Oh My Pi (`omp`) support for prompt injection, status setup with waiting detection, skills, and sandbox credential mounts.
+
 ## v0.1.212 (2026-06-06)
 
 - Add an uninstall script that removes workmux hooks, bundled skills, cache, and state data while preserving unrelated agent configuration.
