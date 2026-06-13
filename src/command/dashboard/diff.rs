@@ -60,9 +60,10 @@ impl DiffHunk {
             .iter()
             .enumerate()
             .filter(|(_, line)| {
-                let s = strip_ansi_escapes(line);
-                (s.starts_with('+') && !s.starts_with("+++"))
-                    || (s.starts_with('-') && !s.starts_with("---"))
+                matches!(
+                    classify_diff_line(line),
+                    DiffLineClass::Added | DiffLineClass::Removed
+                )
             })
             .map(|(i, _)| i)
             .collect();
@@ -129,15 +130,18 @@ impl DiffHunk {
         let mut current_new = base_new_start;
 
         for line in &all_lines[0..offset] {
-            let s = strip_ansi_escapes(line);
-            if s.starts_with('-') && !s.starts_with("---") {
-                current_old += 1;
-            } else if s.starts_with('+') && !s.starts_with("+++") {
-                current_new += 1;
-            } else {
-                // Context line
-                current_old += 1;
-                current_new += 1;
+            match classify_diff_line(line) {
+                DiffLineClass::Removed => {
+                    current_old += 1;
+                }
+                DiffLineClass::Added => {
+                    current_new += 1;
+                }
+                DiffLineClass::Context => {
+                    // Context line
+                    current_old += 1;
+                    current_new += 1;
+                }
             }
         }
 
@@ -148,16 +152,19 @@ impl DiffHunk {
         let mut removed = 0;
 
         for line in lines {
-            let s = strip_ansi_escapes(line);
-            if s.starts_with('-') && !s.starts_with("---") {
-                count_old += 1;
-                removed += 1;
-            } else if s.starts_with('+') && !s.starts_with("+++") {
-                count_new += 1;
-                added += 1;
-            } else {
-                count_old += 1;
-                count_new += 1;
+            match classify_diff_line(line) {
+                DiffLineClass::Removed => {
+                    count_old += 1;
+                    removed += 1;
+                }
+                DiffLineClass::Added => {
+                    count_new += 1;
+                    added += 1;
+                }
+                DiffLineClass::Context => {
+                    count_old += 1;
+                    count_new += 1;
+                }
             }
         }
 
@@ -263,6 +270,24 @@ impl DiffView {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DiffLineClass {
+    Added,
+    Removed,
+    Context,
+}
+
+fn classify_diff_line(line: &str) -> DiffLineClass {
+    let stripped = strip_ansi_escapes(line);
+    if stripped.starts_with('+') && !stripped.starts_with("+++") {
+        DiffLineClass::Added
+    } else if stripped.starts_with('-') && !stripped.starts_with("---") {
+        DiffLineClass::Removed
+    } else {
+        DiffLineClass::Context
+    }
+}
+
 /// Parse "@@ -10,5 +12,7 @@" -> Some((10, 12))
 pub fn parse_hunk_header(header: &str) -> Option<(usize, usize)> {
     let stripped = strip_ansi_escapes(header);
@@ -293,11 +318,10 @@ pub fn count_hunk_stats(hunk_body: &str) -> (usize, usize) {
     let mut added = 0;
     let mut removed = 0;
     for line in hunk_body.lines() {
-        let stripped = strip_ansi_escapes(line);
-        if stripped.starts_with('+') && !stripped.starts_with("+++") {
-            added += 1;
-        } else if stripped.starts_with('-') && !stripped.starts_with("---") {
-            removed += 1;
+        match classify_diff_line(line) {
+            DiffLineClass::Added => added += 1,
+            DiffLineClass::Removed => removed += 1,
+            DiffLineClass::Context => {}
         }
     }
     (added, removed)
@@ -309,11 +333,10 @@ pub fn count_diff_stats(content: &[u8]) -> (usize, usize) {
     let mut added = 0;
     let mut removed = 0;
     for line in text.lines() {
-        let stripped = strip_ansi_escapes(line);
-        if stripped.starts_with('+') && !stripped.starts_with("+++") {
-            added += 1;
-        } else if stripped.starts_with('-') && !stripped.starts_with("---") {
-            removed += 1;
+        match classify_diff_line(line) {
+            DiffLineClass::Added => added += 1,
+            DiffLineClass::Removed => removed += 1,
+            DiffLineClass::Context => {}
         }
     }
     (added, removed)
