@@ -1116,27 +1116,7 @@ mod tests {
 
     #[test]
     fn test_client_server_heartbeat_roundtrip() {
-        let server = RpcServer::bind().unwrap();
-        let port = server.port();
-        let token = generate_token();
-
-        let mux = multiplexer::create_backend(multiplexer::BackendType::Tmux);
-        let ctx = Arc::new(RpcContext {
-            pane_id: "%0".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
-            mux,
-            token: token.clone(),
-            allowed_commands: std::collections::HashSet::new(),
-            detected_toolchain: crate::sandbox::toolchain::DetectedToolchain::None,
-            allow_unsandboxed_host_exec: false,
-        });
-
-        let _handle = server.spawn(ctx);
-
-        // Give server thread a moment to start
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let mut client = RpcClient::connect("127.0.0.1", port, &token).unwrap();
+        let (mut client, _port, _token) = setup_test_server();
         let resp = client.call(&RpcRequest::Heartbeat).unwrap();
         match resp {
             RpcResponse::Ok => {}
@@ -1254,24 +1234,7 @@ mod tests {
 
     #[test]
     fn test_client_server_invalid_token() {
-        let server = RpcServer::bind().unwrap();
-        let port = server.port();
-        let token = generate_token();
-
-        let mux = multiplexer::create_backend(multiplexer::BackendType::Tmux);
-        let ctx = Arc::new(RpcContext {
-            pane_id: "%0".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
-            mux,
-            token: token.clone(),
-            allowed_commands: std::collections::HashSet::new(),
-            detected_toolchain: crate::sandbox::toolchain::DetectedToolchain::None,
-            allow_unsandboxed_host_exec: false,
-        });
-
-        let _handle = server.spawn(ctx);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
+        let (_client, port, _token) = setup_test_server();
         let mut client = RpcClient::connect("127.0.0.1", port, "wrong-token").unwrap();
         let resp = client.call(&RpcRequest::Heartbeat).unwrap();
         match resp {
@@ -1834,5 +1797,31 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    /// Bind an RPC server, spawn it with a default RpcContext, and return
+    /// a connected client, the port, and the generated token.
+    fn setup_test_server() -> (RpcClient, u16, String) {
+        let server = RpcServer::bind().unwrap();
+        let port = server.port();
+        let token = generate_token();
+
+        let mux = multiplexer::create_backend(multiplexer::BackendType::Tmux);
+        let ctx = Arc::new(RpcContext {
+            pane_id: "%0".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            mux,
+            token: token.clone(),
+            allowed_commands: std::collections::HashSet::new(),
+            detected_toolchain: crate::sandbox::toolchain::DetectedToolchain::None,
+            allow_unsandboxed_host_exec: false,
+        });
+
+        let _handle = server.spawn(ctx);
+        // Give server thread a moment to start
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let client = RpcClient::connect("127.0.0.1", port, &token).unwrap();
+        (client, port, token)
     }
 }
