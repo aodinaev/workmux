@@ -8,43 +8,13 @@ use ratatui::{
     widgets::{Cell, Paragraph, Row, Table},
 };
 
-use super::super::app::{App, DashboardTab, ViewMode};
+use super::super::app::App;
 use super::super::keymap::{Context, help_rows};
 use super::popup::{centered_rect, popup_block, render_popup};
 
 /// Determine the current keymap context for help display.
 fn get_help_context(app: &App) -> Context {
-    match &app.view_mode {
-        ViewMode::Dashboard => match app.active_tab {
-            DashboardTab::Agents => {
-                if app.filter_active {
-                    Context::DashboardFilter
-                } else if app.input_mode {
-                    Context::DashboardInput
-                } else {
-                    Context::DashboardNormal
-                }
-            }
-            DashboardTab::Worktrees => {
-                if app.worktree_filter_active {
-                    Context::WorktreeFilter
-                } else {
-                    Context::WorktreeNormal
-                }
-            }
-        },
-        ViewMode::Diff(diff) => {
-            if diff.patch_mode {
-                if diff.comment_input.is_some() {
-                    Context::Comment
-                } else {
-                    Context::Patch
-                }
-            } else {
-                Context::DiffNormal
-            }
-        }
-    }
+    app.keymap_context()
 }
 
 /// Get the title for the help overlay based on context.

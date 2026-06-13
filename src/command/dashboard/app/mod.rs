@@ -25,6 +25,7 @@ use crate::multiplexer::{AgentPane, Multiplexer};
 use crate::state::StateStore;
 use crate::workflow::types::WorktreeInfo;
 
+use super::keymap::Context;
 use super::ui::theme::ThemePalette;
 
 const PR_FETCH_INTERVAL: Duration = Duration::from_secs(30);
@@ -374,5 +375,39 @@ impl App {
 
         // Apply name filter, stale filter, sort, and restore selection
         self.apply_filters();
+    }
+
+    pub(crate) fn keymap_context(&self) -> Context {
+        match &self.view_mode {
+            ViewMode::Dashboard => match self.active_tab {
+                DashboardTab::Agents => {
+                    if self.filter_active {
+                        Context::DashboardFilter
+                    } else if self.input_mode {
+                        Context::DashboardInput
+                    } else {
+                        Context::DashboardNormal
+                    }
+                }
+                DashboardTab::Worktrees => {
+                    if self.worktree_filter_active {
+                        Context::WorktreeFilter
+                    } else {
+                        Context::WorktreeNormal
+                    }
+                }
+            },
+            ViewMode::Diff(diff) => {
+                if diff.patch_mode {
+                    if diff.comment_input.is_some() {
+                        Context::Comment
+                    } else {
+                        Context::Patch
+                    }
+                } else {
+                    Context::DiffNormal
+                }
+            }
+        }
     }
 }
