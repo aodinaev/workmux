@@ -3,8 +3,15 @@
 //! These helpers are shared between tmux, WezTerm, and any future backends.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
+
+use crate::cmd::Cmd;
+
+use super::PaneHandshake;
+use super::handshake::UnixPipeHandshake;
 use super::types::LivePaneInfo;
 
 /// Helper function to add prefix to window name.
@@ -47,6 +54,59 @@ pub fn build_live_pane_info(
         session: Some(session),
         window: Some(window),
     }
+}
+
+/// Snapshot of live pane fields before conversion to `LivePaneInfo`.
+pub struct LivePaneSnapshot {
+    pub pane_id: String,
+    pub pid: Option<u32>,
+    pub current_command: Option<String>,
+    pub working_dir: PathBuf,
+    pub title: String,
+    pub session: String,
+    pub window: String,
+}
+
+impl LivePaneSnapshot {
+    pub fn into_pair(self) -> (String, LivePaneInfo) {
+        let pane_id = self.pane_id;
+        let info = build_live_pane_info(
+            self.pid,
+            self.current_command,
+            self.working_dir,
+            &self.title,
+            self.session,
+            self.window,
+        );
+        (pane_id, info)
+    }
+}
+
+/// Build a pane ID map from live pane snapshots.
+pub fn live_pane_map<I>(snapshots: I) -> HashMap<String, LivePaneInfo>
+where
+    I: IntoIterator<Item = LivePaneSnapshot>,
+{
+    snapshots
+        .into_iter()
+        .map(LivePaneSnapshot::into_pair)
+        .collect()
+}
+
+/// Resolve the default shell from `$SHELL`, falling back when unset.
+pub fn default_shell(fallback: &str) -> Result<String> {
+    std::env::var("SHELL").or_else(|_| Ok(fallback.to_string()))
+}
+
+/// Create a Unix pipe handshake for shell startup synchronization.
+pub fn unix_pipe_handshake() -> Result<Box<dyn PaneHandshake>> {
+    Ok(Box::new(UnixPipeHandshake::new()?))
+}
+
+/// Run a shell script detached via `nohup sh -c`.
+pub fn run_detached_sh_c(script: &str) -> Result<()> {
+    let bg_script = format!("nohup sh -c '{}' >/dev/null 2>&1 &", script);
+    Cmd::new("sh").args(&["-c", &bg_script]).run().map(|_| ())
 }
 
 /// Rewrites an agent command to inject a prompt file's contents.

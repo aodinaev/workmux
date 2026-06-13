@@ -14,9 +14,8 @@ use tracing::{debug, warn};
 use crate::cmd::Cmd;
 use crate::config::SplitDirection;
 
-use super::handshake::UnixPipeHandshake;
 use super::types::{CreateWindowParams, LivePaneInfo};
-use super::{Multiplexer, PaneHandshake};
+use super::{Multiplexer, PaneHandshake, util};
 
 /// Zellij multiplexer backend.
 pub struct ZellijBackend {
@@ -256,22 +255,10 @@ impl Multiplexer for ZellijBackend {
         ))
     }
 
-    fn session_exists(&self, _full_name: &str) -> Result<bool> {
-        Ok(false)
-    }
-
-    fn kill_session(&self, _full_name: &str) -> Result<()> {
-        Ok(())
-    }
-
     fn schedule_session_close(&self, _full_name: &str, _delay: Duration) -> Result<()> {
         Err(anyhow!(
             "Session mode is not supported in Zellij. Use window mode instead."
         ))
-    }
-
-    fn get_all_session_names(&self) -> Result<HashSet<String>> {
-        Ok(HashSet::new())
     }
 
     fn wait_until_session_closed(&self, _full_session_name: &str) -> Result<()> {
@@ -281,9 +268,7 @@ impl Multiplexer for ZellijBackend {
     }
 
     fn run_deferred_script(&self, script: &str) -> Result<()> {
-        let bg_script = format!("nohup sh -c '{}' >/dev/null 2>&1 &", script);
-        Cmd::new("sh").args(&["-c", &bg_script]).run()?;
-        Ok(())
+        util::run_detached_sh_c(script)
     }
 
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
@@ -680,46 +665,20 @@ impl Multiplexer for ZellijBackend {
 
     // === Text I/O ===
 
-    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()> {
-        // Use --pane-id for reliable pane targeting (zellij PR #4691)
+    fn send_text_fragment(&self, pane_id: &str, text: &str) -> Result<()> {
         Cmd::new("zellij")
-            .args(&["action", "write-chars", "--pane-id", pane_id, command])
+            .args(&["action", "write-chars", "--pane-id", pane_id, text])
             .run()
-            .context("Failed to send keys")?;
+            .context("Failed to send text to pane")
+            .map(|_| ())
+    }
 
-        // Send Enter (ASCII 13)
+    fn send_enter(&self, pane_id: &str) -> Result<()> {
         Cmd::new("zellij")
             .args(&["action", "write", "--pane-id", pane_id, "13"])
             .run()
-            .context("Failed to send Enter")?;
-        Ok(())
-    }
-
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        use super::agent;
-
-        let profile = agent::resolve_profile(agent);
-
-        if profile.needs_bang_delay() && command.starts_with('!') {
-            // Send ! first, wait, then rest of command
-            Cmd::new("zellij")
-                .args(&["action", "write-chars", "--pane-id", pane_id, "!"])
-                .run()?;
-
-            std::thread::sleep(std::time::Duration::from_millis(50));
-
-            Cmd::new("zellij")
-                .args(&["action", "write-chars", "--pane-id", pane_id, &command[1..]])
-                .run()?;
-
-            Cmd::new("zellij")
-                .args(&["action", "write", "--pane-id", pane_id, "13"])
-                .run()?;
-
-            Ok(())
-        } else {
-            self.send_keys(pane_id, command)
-        }
+            .context("Failed to send Enter")
+            .map(|_| ())
     }
 
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()> {
@@ -785,12 +744,11 @@ impl Multiplexer for ZellijBackend {
     // === Shell ===
 
     fn get_default_shell(&self) -> Result<String> {
-        std::env::var("SHELL").or_else(|_| Ok("/bin/sh".to_string()))
+        util::default_shell("/bin/sh")
     }
 
     fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        // Reuse the same Unix pipe handshake as WezTerm
-        Ok(Box::new(UnixPipeHandshake::new()?))
+        util::unix_pipe_handshake()
     }
 
     // === Status ===

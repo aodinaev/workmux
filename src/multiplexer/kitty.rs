@@ -14,11 +14,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::Duration;
 
-use super::agent;
-use super::handshake::UnixPipeHandshake;
 use super::types::*;
 use super::util;
 use super::{Multiplexer, PaneHandshake};
@@ -245,6 +242,18 @@ impl KittyBackend {
         // kitten @ launch returns the new window ID
         Ok(output.trim().to_string())
     }
+
+    fn live_pane_snapshot(p: FlatPane) -> util::LivePaneSnapshot {
+        util::LivePaneSnapshot {
+            pane_id: p.window_id.to_string(),
+            pid: Some(p.foreground_pid.unwrap_or(p.pid)),
+            current_command: p.foreground_command.or_else(|| Some("unknown".to_string())),
+            working_dir: p.cwd,
+            title: p.title,
+            session: format!("os-window-{}", p.os_window_id),
+            window: p.tab_title,
+        }
+    }
 }
 
 impl Multiplexer for KittyBackend {
@@ -306,22 +315,10 @@ impl Multiplexer for KittyBackend {
         ))
     }
 
-    fn session_exists(&self, _full_name: &str) -> Result<bool> {
-        Ok(false)
-    }
-
-    fn kill_session(&self, _full_name: &str) -> Result<()> {
-        Ok(())
-    }
-
     fn schedule_session_close(&self, _full_name: &str, _delay: Duration) -> Result<()> {
         Err(anyhow!(
             "Session mode is not supported in Kitty. Use window mode instead."
         ))
-    }
-
-    fn get_all_session_names(&self) -> Result<HashSet<String>> {
-        Ok(HashSet::new())
     }
 
     fn wait_until_session_closed(&self, _full_session_name: &str) -> Result<()> {
@@ -434,10 +431,7 @@ impl Multiplexer for KittyBackend {
     }
 
     fn run_deferred_script(&self, script: &str) -> Result<()> {
-        // Run the script in the background using nohup
-        let bg_script = format!("nohup sh -c '{}' >/dev/null 2>&1 &", script);
-        Cmd::new("sh").args(&["-c", &bg_script]).run()?;
-        Ok(())
+        util::run_detached_sh_c(script)
     }
 
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
@@ -570,54 +564,20 @@ impl Multiplexer for KittyBackend {
 
     // === Text I/O ===
 
-    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()> {
-        // Send the command text
+    fn send_text_fragment(&self, pane_id: &str, text: &str) -> Result<()> {
         self.kitten_cmd()
-            .args(&["send-text", "--match", &format!("id:{}", pane_id), command])
+            .args(&["send-text", "--match", &format!("id:{}", pane_id), text])
             .run()
-            .context("Failed to send text to pane")?;
+            .context("Failed to send text to pane")
+            .map(|_| ())
+    }
 
-        // Send Enter key
+    fn send_enter(&self, pane_id: &str) -> Result<()> {
         self.kitten_cmd()
             .args(&["send-text", "--match", &format!("id:{}", pane_id), "\r"])
             .run()
-            .context("Failed to send Enter key to pane")?;
-
-        Ok(())
-    }
-
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
-            // Send ! first
-            self.kitten_cmd()
-                .args(&["send-text", "--match", &format!("id:{}", pane_id), "!"])
-                .run()
-                .context("Failed to send ! to pane")?;
-
-            // Small delay to let Claude register the !
-            thread::sleep(Duration::from_millis(50));
-
-            // Send the rest of the command
-            self.kitten_cmd()
-                .args(&[
-                    "send-text",
-                    "--match",
-                    &format!("id:{}", pane_id),
-                    &command[1..],
-                ])
-                .run()
-                .context("Failed to send keys to pane")?;
-
-            // Send Enter
-            self.kitten_cmd()
-                .args(&["send-text", "--match", &format!("id:{}", pane_id), "\r"])
-                .run()
-                .context("Failed to send Enter key to pane")?;
-
-            Ok(())
-        } else {
-            self.send_keys(pane_id, command)
-        }
+            .context("Failed to send Enter key to pane")
+            .map(|_| ())
     }
 
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()> {
@@ -662,31 +622,14 @@ impl Multiplexer for KittyBackend {
         Ok(())
     }
 
-    fn paste_multiline(&self, pane_id: &str, content: &str) -> Result<()> {
-        self.paste_text(pane_id, content)?;
-
-        // Small delay to let the application process the bracketed paste before sending Enter
-        thread::sleep(Duration::from_millis(100));
-
-        // Send Enter to submit
-        self.kitten_cmd()
-            .args(&["send-text", "--match", &format!("id:{}", pane_id), "\r"])
-            .run()
-            .context("Failed to send Enter after paste")?;
-
-        Ok(())
-    }
-
     // === Shell ===
 
     fn get_default_shell(&self) -> Result<String> {
-        // Kitty doesn't have a config query CLI
-        // Use $SHELL or fall back to /bin/bash
-        std::env::var("SHELL").or_else(|_| Ok("/bin/bash".to_string()))
+        util::default_shell("/bin/bash")
     }
 
     fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        Ok(Box::new(UnixPipeHandshake::new()?))
+        util::unix_pipe_handshake()
     }
 
     // === Status ===
@@ -774,38 +717,15 @@ impl Multiplexer for KittyBackend {
         let pane = panes.into_iter().find(|p| p.window_id == pane_id_num);
 
         match pane {
-            Some(p) => Ok(Some(util::build_live_pane_info(
-                Some(p.foreground_pid.unwrap_or(p.pid)),
-                p.foreground_command.or_else(|| Some("unknown".to_string())),
-                p.cwd,
-                &p.title,
-                format!("os-window-{}", p.os_window_id),
-                p.tab_title,
-            ))),
+            Some(p) => Ok(Some(Self::live_pane_snapshot(p).into_pair().1)),
             None => Ok(None),
         }
     }
 
     fn get_all_live_pane_info(&self) -> Result<HashMap<String, LivePaneInfo>> {
-        let mut result = HashMap::new();
-
-        for p in self.list_panes()? {
-            let pane_id = p.window_id.to_string();
-
-            result.insert(
-                pane_id,
-                util::build_live_pane_info(
-                    Some(p.foreground_pid.unwrap_or(p.pid)),
-                    p.foreground_command.or_else(|| Some("unknown".to_string())),
-                    p.cwd,
-                    &p.title,
-                    format!("os-window-{}", p.os_window_id),
-                    p.tab_title,
-                ),
-            );
-        }
-
-        Ok(result)
+        Ok(util::live_pane_map(
+            self.list_panes()?.into_iter().map(Self::live_pane_snapshot),
+        ))
     }
 
     fn split_pane(

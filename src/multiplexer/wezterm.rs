@@ -5,16 +5,13 @@
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::Duration;
 
 use crate::cmd::Cmd;
 use crate::config::SplitDirection;
 
-use super::agent;
-use super::handshake::UnixPipeHandshake;
 use super::types::*;
 use super::util;
 use super::{Multiplexer, PaneHandshake};
@@ -144,6 +141,38 @@ impl WezTermBackend {
             .filter(|s| !s.is_empty());
 
         (pid, current_command)
+    }
+
+    fn live_pane_snapshot(&self, p: &WezTermPane) -> util::LivePaneSnapshot {
+        let (pid, current_command) = self.foreground_process_info(p.tty_name.as_deref());
+        util::LivePaneSnapshot {
+            pane_id: p.pane_id.to_string(),
+            pid,
+            current_command,
+            working_dir: p.cwd_path(),
+            title: p.title.clone(),
+            session: p.workspace.clone(),
+            window: p.tab_title.clone(),
+        }
+    }
+
+    fn tab_panes<'a>(
+        panes: &'a [WezTermPane],
+        tab_title: &str,
+        workspace: Option<&str>,
+    ) -> Vec<&'a WezTermPane> {
+        panes
+            .iter()
+            .filter(|p| p.tab_title == tab_title && workspace.is_none_or(|ws| p.workspace == ws))
+            .collect()
+    }
+
+    fn matching_tab_panes<'a>(
+        &self,
+        panes: &'a [WezTermPane],
+        tab_title: &str,
+    ) -> Vec<&'a WezTermPane> {
+        Self::tab_panes(panes, tab_title, self.current_workspace().as_deref())
     }
 
     /// Get the current workspace name from the environment.
@@ -309,15 +338,7 @@ impl Multiplexer for WezTermBackend {
 
     fn kill_window(&self, full_name: &str) -> Result<()> {
         let panes = self.list_panes()?;
-        let current_ws = self.current_workspace();
-
-        // Find all panes in tabs matching this tab_title (filtered by workspace)
-        let tab_panes: Vec<_> = panes
-            .iter()
-            .filter(|p| {
-                p.tab_title == full_name && current_ws.as_ref().is_none_or(|ws| &p.workspace == ws)
-            })
-            .collect();
+        let tab_panes = self.matching_tab_panes(&panes, full_name);
 
         if tab_panes.is_empty() {
             return Ok(()); // Already gone
@@ -335,14 +356,7 @@ impl Multiplexer for WezTermBackend {
 
     fn schedule_window_close(&self, full_name: &str, delay: Duration) -> Result<()> {
         let panes = self.list_panes()?;
-        let current_ws = self.current_workspace();
-
-        let tab_panes: Vec<_> = panes
-            .iter()
-            .filter(|p| {
-                p.tab_title == full_name && current_ws.as_ref().is_none_or(|ws| &p.workspace == ws)
-            })
-            .collect();
+        let tab_panes = self.matching_tab_panes(&panes, full_name);
 
         if tab_panes.is_empty() {
             return Ok(());
@@ -374,20 +388,15 @@ impl Multiplexer for WezTermBackend {
     }
 
     fn run_deferred_script(&self, script: &str) -> Result<()> {
-        // Run the script in the background using nohup
-        let bg_script = format!("nohup sh -c '{}' >/dev/null 2>&1 &", script);
-        Cmd::new("sh").args(&["-c", &bg_script]).run()?;
-        Ok(())
+        util::run_detached_sh_c(script)
     }
 
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
         let panes = self.list_panes()?;
-        let current_ws = self.current_workspace();
-        let target = panes
-            .iter()
-            .find(|p| {
-                p.tab_title == full_name && current_ws.as_ref().is_none_or(|ws| &p.workspace == ws)
-            })
+        let target = self
+            .matching_tab_panes(&panes, full_name)
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow!("Window '{}' not found", full_name))?;
         Ok(format!(
             "wezterm cli activate-tab --tab-id {} >/dev/null 2>&1",
@@ -397,13 +406,7 @@ impl Multiplexer for WezTermBackend {
 
     fn shell_kill_window_cmd(&self, full_name: &str) -> Result<String> {
         let panes = self.list_panes()?;
-        let current_ws = self.current_workspace();
-        let tab_panes: Vec<_> = panes
-            .iter()
-            .filter(|p| {
-                p.tab_title == full_name && current_ws.as_ref().is_none_or(|ws| &p.workspace == ws)
-            })
-            .collect();
+        let tab_panes = self.matching_tab_panes(&panes, full_name);
 
         if tab_panes.is_empty() {
             return Err(anyhow!("Window '{}' not found", full_name));
@@ -438,14 +441,10 @@ impl Multiplexer for WezTermBackend {
     fn select_window(&self, prefix: &str, name: &str) -> Result<()> {
         let full_name = util::prefixed(prefix, name);
         let panes = self.list_panes()?;
-        let current_ws = self.current_workspace();
-
-        // Find tab by tab_title (filtered by workspace)
-        let target = panes
-            .iter()
-            .find(|p| {
-                p.tab_title == full_name && current_ws.as_ref().is_none_or(|ws| &p.workspace == ws)
-            })
+        let target = self
+            .matching_tab_panes(&panes, &full_name)
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow!("Window '{}' not found", full_name))?;
 
         self.wezterm_cmd()
@@ -488,11 +487,6 @@ impl Multiplexer for WezTermBackend {
             .collect();
 
         Ok(names)
-    }
-
-    fn get_all_session_names(&self) -> Result<HashSet<String>> {
-        // WezTerm doesn't support session mode - return empty set
-        Ok(HashSet::new())
     }
 
     fn wait_until_session_closed(&self, _full_session_name: &str) -> Result<()> {
@@ -619,61 +613,16 @@ impl Multiplexer for WezTermBackend {
 
     // === Text I/O ===
 
-    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()> {
-        // WezTerm send-text sends literal text
+    fn send_text_fragment(&self, pane_id: &str, text: &str) -> Result<()> {
         self.wezterm_cmd()
-            .args(&[
-                "cli",
-                "send-text",
-                "--pane-id",
-                pane_id,
-                "--no-paste",
-                command,
-            ])
-            .run()?;
-
-        // Send Enter
-        self.wezterm_cmd()
-            .args(&["cli", "send-text", "--pane-id", pane_id, "--no-paste", "\r"])
-            .run()?;
-
-        Ok(())
+            .args(&["cli", "send-text", "--pane-id", pane_id, "--no-paste", text])
+            .run()
+            .context("Failed to send text to pane")
+            .map(|_| ())
     }
 
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
-            // Send ! first
-            self.wezterm_cmd()
-                .args(&["cli", "send-text", "--pane-id", pane_id, "--no-paste", "!"])
-                .run()
-                .context("Failed to send ! to pane")?;
-
-            // Small delay to let Claude register the !
-            thread::sleep(Duration::from_millis(50));
-
-            // Send the rest of the command (without the !)
-            self.wezterm_cmd()
-                .args(&[
-                    "cli",
-                    "send-text",
-                    "--pane-id",
-                    pane_id,
-                    "--no-paste",
-                    &command[1..],
-                ])
-                .run()
-                .context("Failed to send keys to pane")?;
-
-            // Send Enter
-            self.wezterm_cmd()
-                .args(&["cli", "send-text", "--pane-id", pane_id, "--no-paste", "\r"])
-                .run()
-                .context("Failed to send Enter key to pane")?;
-
-            Ok(())
-        } else {
-            self.send_keys(pane_id, command)
-        }
+    fn send_enter(&self, pane_id: &str) -> Result<()> {
+        self.send_text_fragment(pane_id, "\r")
     }
 
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()> {
@@ -693,30 +642,14 @@ impl Multiplexer for WezTermBackend {
         Ok(())
     }
 
-    fn paste_multiline(&self, pane_id: &str, content: &str) -> Result<()> {
-        self.paste_text(pane_id, content)?;
-
-        // Small delay to let the application process the bracketed paste before sending Enter
-        thread::sleep(Duration::from_millis(100));
-
-        // Send Enter to submit
-        self.wezterm_cmd()
-            .args(&["cli", "send-text", "--pane-id", pane_id, "--no-paste", "\r"])
-            .run()?;
-
-        Ok(())
-    }
-
     // === Shell ===
 
     fn get_default_shell(&self) -> Result<String> {
-        // WezTerm doesn't have a config query CLI
-        // Use $SHELL or fall back to /bin/bash
-        std::env::var("SHELL").or_else(|_| Ok("/bin/bash".to_string()))
+        util::default_shell("/bin/bash")
     }
 
     fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        Ok(Box::new(UnixPipeHandshake::new()?))
+        util::unix_pipe_handshake()
     }
 
     // === Status ===
@@ -772,17 +705,7 @@ impl Multiplexer for WezTermBackend {
         let pane = panes.into_iter().find(|p| p.pane_id == pane_id_num);
 
         match pane {
-            Some(p) => {
-                let (pid, current_command) = self.foreground_process_info(p.tty_name.as_deref());
-                Ok(Some(util::build_live_pane_info(
-                    pid,
-                    current_command,
-                    p.cwd_path(),
-                    &p.title,
-                    p.workspace,
-                    p.tab_title,
-                )))
-            }
+            Some(p) => Ok(Some(self.live_pane_snapshot(&p).into_pair().1)),
             None => Ok(None),
         }
     }
@@ -795,28 +718,12 @@ impl Multiplexer for WezTermBackend {
         Ok(names)
     }
 
-    fn get_all_live_pane_info(&self) -> Result<std::collections::HashMap<String, LivePaneInfo>> {
-        use std::collections::HashMap;
-
-        let mut result = HashMap::new();
-
-        for p in self.list_panes()? {
-            let pane_id = p.pane_id.to_string();
-            let (pid, current_command) = self.foreground_process_info(p.tty_name.as_deref());
-            result.insert(
-                pane_id,
-                util::build_live_pane_info(
-                    pid,
-                    current_command,
-                    p.cwd_path(),
-                    &p.title,
-                    p.workspace,
-                    p.tab_title,
-                ),
-            );
-        }
-
-        Ok(result)
+    fn get_all_live_pane_info(&self) -> Result<HashMap<String, LivePaneInfo>> {
+        Ok(util::live_pane_map(
+            self.list_panes()?
+                .iter()
+                .map(|p| self.live_pane_snapshot(p)),
+        ))
     }
 
     fn split_pane(

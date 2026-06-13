@@ -842,16 +842,11 @@ mod tests {
             None
         }
 
-        fn send_keys(&self, _pane_id: &str, _command: &str) -> Result<()> {
+        fn send_text_fragment(&self, _pane_id: &str, _text: &str) -> Result<()> {
             Ok(())
         }
 
-        fn send_keys_to_agent(
-            &self,
-            _pane_id: &str,
-            _command: &str,
-            _agent: Option<&str>,
-        ) -> Result<()> {
+        fn send_enter(&self, _pane_id: &str) -> Result<()> {
             Ok(())
         }
 

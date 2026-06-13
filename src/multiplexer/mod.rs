@@ -103,10 +103,14 @@ pub trait Multiplexer: Send + Sync {
     fn switch_to_session(&self, prefix: &str, name: &str) -> Result<()>;
 
     /// Check if a session exists by its full name.
-    fn session_exists(&self, full_name: &str) -> Result<bool>;
+    fn session_exists(&self, _full_name: &str) -> Result<bool> {
+        Ok(false)
+    }
 
     /// Kill a session by its full name (including prefix).
-    fn kill_session(&self, full_name: &str) -> Result<()>;
+    fn kill_session(&self, _full_name: &str) -> Result<()> {
+        Ok(())
+    }
 
     /// Kill a window by its full name (including prefix)
     fn kill_window(&self, full_name: &str) -> Result<()>;
@@ -231,7 +235,9 @@ pub trait Multiplexer: Send + Sync {
     }
 
     /// Get all session names
-    fn get_all_session_names(&self) -> Result<HashSet<String>>;
+    fn get_all_session_names(&self) -> Result<HashSet<String>> {
+        Ok(HashSet::new())
+    }
 
     /// Filter a list of window names, returning only those that still exist
     fn filter_active_windows(&self, windows: &[String]) -> Result<Vec<String>> {
@@ -323,8 +329,17 @@ pub trait Multiplexer: Send + Sync {
 
     // === Text I/O ===
 
+    /// Send a text fragment to a pane without submitting it.
+    fn send_text_fragment(&self, pane_id: &str, text: &str) -> Result<()>;
+
+    /// Submit the current pane input (Enter).
+    fn send_enter(&self, pane_id: &str) -> Result<()>;
+
     /// Send keys (command + Enter) to a pane
-    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()>;
+    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()> {
+        self.send_text_fragment(pane_id, command)?;
+        self.send_enter(pane_id)
+    }
 
     /// Whether this backend requires focusing a pane before sending input to it.
     /// Defaults to false. Backends like Zellij that can't target unfocused panes
@@ -334,7 +349,16 @@ pub trait Multiplexer: Send + Sync {
     }
 
     /// Send keys to an agent pane, with special handling for Claude's ! prefix
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()>;
+    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
+        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
+            self.send_text_fragment(pane_id, "!")?;
+            thread::sleep(Duration::from_millis(50));
+            self.send_text_fragment(pane_id, &command[1..])?;
+            self.send_enter(pane_id)
+        } else {
+            self.send_keys(pane_id, command)
+        }
+    }
 
     /// Send a single key to a pane
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()>;
@@ -345,7 +369,8 @@ pub trait Multiplexer: Send + Sync {
     /// Paste multiline content to a pane (using bracketed paste)
     fn paste_multiline(&self, pane_id: &str, content: &str) -> Result<()> {
         self.paste_text(pane_id, content)?;
-        self.send_key(pane_id, "Enter")
+        thread::sleep(Duration::from_millis(100));
+        self.send_enter(pane_id)
     }
 
     /// Clear the pane screen. Default is no-op; backends override if needed.

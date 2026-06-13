@@ -14,7 +14,7 @@ use crate::config::SplitDirection as ConfigSplitDirection;
 
 use super::handshake::TmuxHandshake;
 use super::types::*;
-use super::{Multiplexer, PaneHandshake, agent, util};
+use super::{Multiplexer, PaneHandshake, util};
 
 /// tmux backend implementation.
 ///
@@ -642,27 +642,12 @@ impl Multiplexer for TmuxBackend {
 
     // === Text I/O ===
 
-    fn send_keys(&self, pane_id: &str, command: &str) -> Result<()> {
-        self.tmux_cmd(&["send-keys", "-t", pane_id, "-l", command])?;
-        self.tmux_cmd(&["send-keys", "-t", pane_id, "Enter"])
+    fn send_text_fragment(&self, pane_id: &str, text: &str) -> Result<()> {
+        self.tmux_cmd(&["send-keys", "-t", pane_id, "-l", text])
     }
 
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
-            // Send ! first
-            self.tmux_cmd(&["send-keys", "-t", pane_id, "-l", "!"])?;
-
-            // Small delay to let Claude register the !
-            thread::sleep(Duration::from_millis(50));
-
-            // Send the rest of the command
-            self.tmux_cmd(&["send-keys", "-t", pane_id, "-l", &command[1..]])?;
-
-            // Send Enter
-            self.tmux_cmd(&["send-keys", "-t", pane_id, "Enter"])
-        } else {
-            self.send_keys(pane_id, command)
-        }
+    fn send_enter(&self, pane_id: &str) -> Result<()> {
+        self.tmux_cmd(&["send-keys", "-t", pane_id, "Enter"])
     }
 
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()> {
@@ -692,15 +677,6 @@ impl Multiplexer for TmuxBackend {
         }
 
         self.tmux_cmd(&["paste-buffer", "-t", pane_id, "-p", "-d"])
-    }
-
-    fn paste_multiline(&self, pane_id: &str, content: &str) -> Result<()> {
-        self.paste_text(pane_id, content)?;
-
-        // Small delay to let the application process the bracketed paste before sending Enter
-        thread::sleep(Duration::from_millis(100));
-
-        self.tmux_cmd(&["send-keys", "-t", pane_id, "Enter"])
     }
 
     // === Shell ===
