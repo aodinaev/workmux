@@ -2,6 +2,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Cell, Row};
 
 /// Truncate a string to max_len characters, appending ellipsis if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
@@ -202,6 +203,62 @@ pub fn format_pr_details(
     palette: &ThemePalette,
 ) -> Vec<ratatui::text::Span<'static>> {
     shared_format_pr_details(pr, spinner_frame, palette)
+}
+
+/// Shared git/PR fetch state for resource table headers.
+pub(crate) struct ResourceHeaderState<'a> {
+    pub palette: &'a ThemePalette,
+    pub spinner_frame: u8,
+    pub git_fetching: bool,
+    pub pr_fetching: bool,
+}
+
+/// Build the shared prefix columns for agent and worktree resource tables.
+pub(crate) fn resource_table_header(
+    state: ResourceHeaderState<'_>,
+    show_pr_column: bool,
+    trailing_columns: &[&'static str],
+) -> Row<'static> {
+    let git_header = build_column_header(
+        "Git",
+        state.git_fetching,
+        state.spinner_frame,
+        state.palette,
+    );
+    let header_style = Style::default().fg(state.palette.header).bold();
+    let mut header_cells = vec![
+        Cell::from("#").style(header_style),
+        Cell::from("Project").style(header_style),
+        Cell::from("Worktree").style(header_style),
+        Cell::from(git_header),
+    ];
+
+    if show_pr_column {
+        let pr_header =
+            build_column_header("PR", state.pr_fetching, state.spinner_frame, state.palette);
+        header_cells.push(Cell::from(pr_header));
+    }
+
+    for column in trailing_columns {
+        header_cells.push(Cell::from(*column).style(header_style));
+    }
+
+    Row::new(header_cells).height(1)
+}
+
+/// Bordered panel block with dashboard header styling.
+pub(crate) fn panel_block(
+    title: impl Into<Line<'static>>,
+    palette: &ThemePalette,
+) -> Block<'static> {
+    let title_style = Style::default()
+        .fg(palette.header)
+        .add_modifier(Modifier::BOLD);
+    let border_style = Style::default().fg(palette.border);
+    Block::bordered()
+        .title(title)
+        .title_style(title_style)
+        .border_style(border_style)
 }
 
 /// Build a column header with optional spinner when data is being fetched.

@@ -51,6 +51,113 @@ fn stale_color(palette: &ThemePalette, is_stale: bool, color: Color) -> Color {
     if is_stale { palette.dimmed } else { color }
 }
 
+type StyledFragment = (String, Style);
+
+struct GitDiffColors {
+    success: Color,
+    danger: Color,
+    accent: Color,
+}
+
+fn git_diff_colors(palette: &ThemePalette, is_stale: bool) -> GitDiffColors {
+    GitDiffColors {
+        success: stale_color(palette, is_stale, palette.success),
+        danger: stale_color(palette, is_stale, palette.danger),
+        accent: stale_color(palette, is_stale, palette.accent),
+    }
+}
+
+fn added_removed_fragments(
+    added_count: usize,
+    removed_count: usize,
+    added_style: Style,
+    removed_style: Style,
+) -> (Option<StyledFragment>, Option<StyledFragment>) {
+    let added = (added_count > 0).then(|| (format!("+{}", added_count), added_style));
+    let removed = (removed_count > 0).then(|| (format!("-{}", removed_count), removed_style));
+    (added, removed)
+}
+
+fn added_removed_variant_ladder(
+    added: Option<StyledFragment>,
+    removed: Option<StyledFragment>,
+) -> Vec<Vec<StyledFragment>> {
+    let mut variants = Vec::new();
+    match (&added, &removed) {
+        (Some(a), Some(r)) => {
+            variants.push(vec![a.clone(), r.clone()]);
+            variants.push(vec![a.clone()]);
+            variants.push(vec![r.clone()]);
+        }
+        (Some(a), None) => variants.push(vec![a.clone()]),
+        (None, Some(r)) => variants.push(vec![r.clone()]),
+        (None, None) => {}
+    }
+    variants
+}
+
+fn uncommitted_variant_ladder(
+    icon: StyledFragment,
+    added: Option<StyledFragment>,
+    removed: Option<StyledFragment>,
+) -> Vec<Vec<StyledFragment>> {
+    let mut variants = Vec::new();
+    match (&added, &removed) {
+        (Some(a), Some(r)) => {
+            variants.push(vec![icon.clone(), a.clone(), r.clone()]);
+            variants.push(vec![icon.clone(), a.clone()]);
+            variants.push(vec![icon.clone(), r.clone()]);
+        }
+        (Some(a), None) => variants.push(vec![icon.clone(), a.clone()]),
+        (None, Some(r)) => variants.push(vec![icon.clone(), r.clone()]),
+        (None, None) => {}
+    }
+    variants.push(vec![icon]);
+    variants
+}
+
+struct SidebarListSetup {
+    now_secs: u64,
+    pane_suffixes: Vec<String>,
+    selected_idx: Option<usize>,
+}
+
+fn sidebar_list_setup(app: &SidebarApp) -> SidebarListSetup {
+    SidebarListSetup {
+        now_secs: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        pane_suffixes: compute_pane_suffixes(&app.agents),
+        selected_idx: app.list_state.selected(),
+    }
+}
+
+fn build_row_contexts<'a>(app: &'a SidebarApp, setup: &SidebarListSetup) -> Vec<RowContext<'a>> {
+    app.agents
+        .iter()
+        .enumerate()
+        .map(|(idx, agent)| {
+            RowContext::build(
+                app,
+                agent,
+                idx,
+                &setup.pane_suffixes,
+                setup.now_secs,
+                setup.selected_idx,
+            )
+        })
+        .collect()
+}
+
+fn apply_selection_bg(spans: &mut [Span<'static>], bg: Color) {
+    for span in spans {
+        if span.style.bg.is_none() {
+            span.style = span.style.bg(bg);
+        }
+    }
+}
+
 /// Format PR check status for sidebar display, fitting within `available_width`.
 pub(crate) fn format_sidebar_pr_status(
     pr: Option<&crate::github::PrSummary>,
@@ -129,10 +236,7 @@ pub(crate) fn format_sidebar_git_stats(
 
     let icons = crate::nerdfont::git_icons();
 
-    // When stale, force all colors to dimmed
-    let success = stale_color(palette, is_stale, palette.success);
-    let danger = stale_color(palette, is_stale, palette.danger);
-    let accent = stale_color(palette, is_stale, palette.accent);
+    let colors = git_diff_colors(palette, is_stale);
 
     let has_committed = status.lines_added > 0 || status.lines_removed > 0;
     let has_uncommitted =
@@ -165,17 +269,17 @@ pub(crate) fn format_sidebar_git_stats(
     // Build uncommitted spans (bright, with diff icon)
     let mut uncommitted_spans: Vec<(String, Style)> = Vec::new();
     if has_uncommitted {
-        uncommitted_spans.push((icons.diff.to_string(), Style::default().fg(accent)));
+        uncommitted_spans.push((icons.diff.to_string(), Style::default().fg(colors.accent)));
         if status.uncommitted_added > 0 {
             uncommitted_spans.push((
                 format!("+{}", status.uncommitted_added),
-                Style::default().fg(success),
+                Style::default().fg(colors.success),
             ));
         }
         if status.uncommitted_removed > 0 {
             uncommitted_spans.push((
                 format!("-{}", status.uncommitted_removed),
-                Style::default().fg(danger),
+                Style::default().fg(colors.danger),
             ));
         }
     }
@@ -186,13 +290,17 @@ pub(crate) fn format_sidebar_git_stats(
         if status.lines_added > 0 {
             committed_spans.push((
                 format!("+{}", status.lines_added),
-                Style::default().fg(success).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(colors.success)
+                    .add_modifier(Modifier::DIM),
             ));
         }
         if status.lines_removed > 0 {
             committed_spans.push((
                 format!("-{}", status.lines_removed),
-                Style::default().fg(danger).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(colors.danger)
+                    .add_modifier(Modifier::DIM),
             ));
         }
     }
@@ -301,28 +409,17 @@ pub(crate) fn format_committed_spans(
         return (Vec::new(), 0);
     }
 
-    let success = stale_color(palette, is_stale, palette.success);
-    let danger = stale_color(palette, is_stale, palette.danger);
-    let style_a = Style::default().fg(success).add_modifier(Modifier::DIM);
-    let style_r = Style::default().fg(danger).add_modifier(Modifier::DIM);
+    let colors = git_diff_colors(palette, is_stale);
+    let style_a = Style::default()
+        .fg(colors.success)
+        .add_modifier(Modifier::DIM);
+    let style_r = Style::default()
+        .fg(colors.danger)
+        .add_modifier(Modifier::DIM);
+    let (added, removed) =
+        added_removed_fragments(status.lines_added, status.lines_removed, style_a, style_r);
 
-    let added = (status.lines_added > 0).then(|| (format!("+{}", status.lines_added), style_a));
-    let removed =
-        (status.lines_removed > 0).then(|| (format!("-{}", status.lines_removed), style_r));
-
-    let mut variants: Vec<Vec<(String, Style)>> = Vec::new();
-    match (&added, &removed) {
-        (Some(a), Some(r)) => {
-            variants.push(vec![a.clone(), r.clone()]);
-            variants.push(vec![a.clone()]);
-            variants.push(vec![r.clone()]);
-        }
-        (Some(a), None) => variants.push(vec![a.clone()]),
-        (None, Some(r)) => variants.push(vec![r.clone()]),
-        (None, None) => {}
-    }
-
-    pick_fitting_variant(variants, max_width)
+    pick_fitting_variant(added_removed_variant_ladder(added, removed), max_width)
 }
 
 /// Format the uncommitted/diff segment with self-fitting.
@@ -345,38 +442,16 @@ pub(crate) fn format_uncommitted_spans(
     }
 
     let icons = crate::nerdfont::git_icons();
-    let success = stale_color(palette, is_stale, palette.success);
-    let danger = stale_color(palette, is_stale, palette.danger);
-    let accent = stale_color(palette, is_stale, palette.accent);
+    let colors = git_diff_colors(palette, is_stale);
+    let icon = (icons.diff.to_string(), Style::default().fg(colors.accent));
+    let (added, removed) = added_removed_fragments(
+        status.uncommitted_added,
+        status.uncommitted_removed,
+        Style::default().fg(colors.success),
+        Style::default().fg(colors.danger),
+    );
 
-    let icon = (icons.diff.to_string(), Style::default().fg(accent));
-    let added = (status.uncommitted_added > 0).then(|| {
-        (
-            format!("+{}", status.uncommitted_added),
-            Style::default().fg(success),
-        )
-    });
-    let removed = (status.uncommitted_removed > 0).then(|| {
-        (
-            format!("-{}", status.uncommitted_removed),
-            Style::default().fg(danger),
-        )
-    });
-
-    let mut variants: Vec<Vec<(String, Style)>> = Vec::new();
-    match (&added, &removed) {
-        (Some(a), Some(r)) => {
-            variants.push(vec![icon.clone(), a.clone(), r.clone()]);
-            variants.push(vec![icon.clone(), a.clone()]);
-            variants.push(vec![icon.clone(), r.clone()]);
-        }
-        (Some(a), None) => variants.push(vec![icon.clone(), a.clone()]),
-        (None, Some(r)) => variants.push(vec![icon.clone(), r.clone()]),
-        (None, None) => {} // dirty but no line counts: fall through to icon-only
-    }
-    variants.push(vec![icon.clone()]);
-
-    pick_fitting_variant(variants, max_width)
+    pick_fitting_variant(uncommitted_variant_ladder(icon, added, removed), max_width)
 }
 
 /// Format the rebase indicator with self-fitting.
@@ -483,12 +558,7 @@ fn render_horizontal_bar(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
         return;
     }
 
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let pane_suffixes = compute_pane_suffixes(&app.agents);
-    let selected_idx = app.list_state.selected();
+    let setup = sidebar_list_setup(app);
     let top_templates: Vec<_> = app
         .templates
         .horizontal
@@ -514,7 +584,14 @@ fn render_horizontal_bar(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
     app.first_visible_agent_idx = start;
 
     for (idx, agent) in app.agents.iter().enumerate().skip(start) {
-        let ctx = RowContext::build(app, agent, idx, &pane_suffixes, now_secs, selected_idx);
+        let ctx = RowContext::build(
+            app,
+            agent,
+            idx,
+            &setup.pane_suffixes,
+            setup.now_secs,
+            setup.selected_idx,
+        );
         let available = max_x.saturating_sub(x) as usize;
         if available == 0 {
             break;
@@ -641,23 +718,10 @@ fn render_compact_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
         return;
     }
 
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let pane_suffixes = compute_pane_suffixes(&app.agents);
-    let selected_idx = app.list_state.selected();
+    let setup = sidebar_list_setup(app);
     let template = app.templates.compact.clone();
     let width = area.width as usize;
-    let contexts: Vec<_> = app
-        .agents
-        .iter()
-        .enumerate()
-        .map(|(idx, agent)| {
-            RowContext::build(app, agent, idx, &pane_suffixes, now_secs, selected_idx)
-        })
-        .collect();
+    let contexts = build_row_contexts(app, &setup);
     let status_icon_width = contexts
         .iter()
         .map(|ctx| ctx.natural_width(TokenId::StatusIcon))
@@ -674,11 +738,7 @@ fn render_compact_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
             // Post-pass: apply selection background where the template has
             // not already supplied an explicit user `bg=`.
             if ctx.is_selected {
-                for span in &mut spans {
-                    if span.style.bg.is_none() {
-                        span.style = span.style.bg(app.palette.highlight_row_bg);
-                    }
-                }
+                apply_selection_bg(&mut spans, app.palette.highlight_row_bg);
             }
 
             ListItem::new(Line::from(spans))
@@ -697,15 +757,10 @@ fn render_tile_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
         return;
     }
 
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let setup = sidebar_list_setup(app);
 
     let sep_width = area.width as usize;
-    let selected_idx = app.list_state.selected();
     let agent_count = app.agents.len();
-    let pane_suffixes = compute_pane_suffixes(&app.agents);
     let tile_templates: Vec<_> = app.templates.tiles.clone();
     let body_width = (area.width as usize).saturating_sub(6); // stripe(2) + icon(2) + gap(1) + right margin(1)
 
@@ -716,7 +771,14 @@ fn render_tile_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
         .iter()
         .enumerate()
         .map(|(idx, agent)| {
-            let ctx = RowContext::build(app, agent, idx, &pane_suffixes, now_secs, selected_idx);
+            let ctx = RowContext::build(
+                app,
+                agent,
+                idx,
+                &setup.pane_suffixes,
+                setup.now_secs,
+                setup.selected_idx,
+            );
 
             // Stripe color on all lines; stale forces dimmed
             let stripe_color = if ctx.is_stale {

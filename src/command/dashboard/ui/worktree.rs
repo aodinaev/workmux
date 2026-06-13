@@ -3,7 +3,7 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span, Text},
     widgets::{Block, Cell, Paragraph, Row, Table},
 };
@@ -28,33 +28,18 @@ pub fn render_worktree_table(f: &mut Frame, app: &mut App, area: Rect) {
     // Only show PR column when at least one worktree has a PR
     let show_pr_column = app.worktrees.iter().any(|w| w.pr_info.is_some());
 
-    // Check if git data is being refreshed
-    let is_git_fetching = app
-        .is_git_fetching
-        .load(std::sync::atomic::Ordering::Relaxed);
-
-    let git_header =
-        format::build_column_header("Git", is_git_fetching, app.spinner_frame, &app.palette);
-
-    let header_style = Style::default().fg(app.palette.header).bold();
-    let mut header_cells = vec![
-        Cell::from("#").style(header_style),
-        Cell::from("Project").style(header_style),
-        Cell::from("Worktree").style(header_style),
-        Cell::from(git_header),
-    ];
-    if show_pr_column {
-        let is_pr_fetching = app.is_pr_fetching();
-        let pr_header =
-            format::build_column_header("PR", is_pr_fetching, app.spinner_frame, &app.palette);
-        header_cells.push(Cell::from(pr_header));
-    }
-    header_cells.extend([
-        Cell::from("Mux").style(header_style),
-        Cell::from("Age").style(header_style),
-    ]);
-    header_cells.push(Cell::from("Agent").style(header_style));
-    let header = Row::new(header_cells).height(1);
+    let header = format::resource_table_header(
+        format::ResourceHeaderState {
+            palette: &app.palette,
+            spinner_frame: app.spinner_frame,
+            git_fetching: app
+                .is_git_fetching
+                .load(std::sync::atomic::Ordering::Relaxed),
+            pr_fetching: app.is_pr_fetching(),
+        },
+        show_pr_column,
+        &["Mux", "Age", "Agent"],
+    );
 
     // Pre-compute row data
     let row_data: Vec<_> = app
@@ -317,10 +302,6 @@ fn render_info_panel(
     area: Rect,
     worktree: Option<&crate::workflow::types::WorktreeInfo>,
 ) {
-    let title_style = Style::default()
-        .fg(app.palette.header)
-        .add_modifier(Modifier::BOLD);
-    let border_style = Style::default().fg(app.palette.border);
     let label_style = Style::default().fg(app.palette.dimmed);
     let text_style = Style::default().fg(app.palette.text);
 
@@ -330,10 +311,7 @@ fn render_info_panel(
         " Info ".to_string()
     };
 
-    let block = Block::bordered()
-        .title(title)
-        .title_style(title_style)
-        .border_style(border_style);
+    let block = format::panel_block(title, &app.palette);
 
     let Some(wt) = worktree else {
         let paragraph = Paragraph::new(Text::raw("(no worktree selected)")).block(block);
@@ -583,15 +561,7 @@ fn render_git_log(
     area: Rect,
     worktree: Option<&crate::workflow::types::WorktreeInfo>,
 ) {
-    let title_style = Style::default()
-        .fg(app.palette.header)
-        .add_modifier(Modifier::BOLD);
-    let border_style = Style::default().fg(app.palette.border);
-
-    let block = Block::bordered()
-        .title(" Git Log ")
-        .title_style(title_style)
-        .border_style(border_style);
+    let block = format::panel_block(" Git Log ", &app.palette);
 
     let text = match (&app.worktree_preview, worktree) {
         (Some(log), Some(_)) if !log.trim().is_empty() => {

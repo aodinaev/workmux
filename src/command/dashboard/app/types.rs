@@ -305,6 +305,48 @@ pub struct CommandPaletteState {
 }
 
 impl CommandPaletteState {
+    pub fn move_next(&mut self) {
+        let count = self.filtered().len();
+        if count > 0 {
+            self.cursor = (self.cursor + 1).min(count - 1);
+        }
+    }
+
+    pub fn move_previous(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    pub fn push_filter_char(&mut self, c: char) {
+        self.filter.push(c);
+        self.cursor = 0;
+    }
+
+    pub fn delete_char(&mut self) {
+        self.filter.pop();
+        self.cursor = 0;
+    }
+
+    pub fn delete_word(&mut self) {
+        let trimmed = self.filter.trim_end();
+        if let Some(pos) = trimmed.rfind(' ') {
+            self.filter.truncate(pos + 1);
+        } else {
+            self.filter.clear();
+        }
+        self.cursor = 0;
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.cursor = 0;
+    }
+
+    pub fn selected_action(&self) -> Option<super::super::actions::Action> {
+        self.filtered()
+            .get(self.cursor)
+            .map(|&idx| self.commands[idx].action.clone())
+    }
+
     /// Return indices into `commands` that match the current filter, sorted by relevance.
     pub fn filtered(&self) -> Vec<usize> {
         if self.filter.is_empty() {

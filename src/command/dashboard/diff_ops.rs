@@ -534,39 +534,13 @@ impl DiffOps for App {
 
     /// Send commit action to the currently selected agent's pane (from dashboard view)
     fn send_commit_to_selected(&mut self) {
-        if let Some(selected) = self.table_state.selected()
-            && let Some(agent) = self.agents.get(selected)
-        {
-            if self.mux.requires_focus_for_input() {
-                let _ = self
-                    .mux
-                    .switch_to_pane(&agent.pane_id, Some(&agent.window_name));
-            }
-
-            let _ = self.mux.send_keys_to_agent(
-                &agent.pane_id,
-                self.config.dashboard.commit(),
-                self.config.agent.as_deref(),
-            );
-        }
+        let keys = self.config.dashboard.commit().to_string();
+        self.send_keys_to_selected_agent(&keys);
     }
 
     /// Send merge action to the currently selected agent's pane (from dashboard view)
     fn trigger_merge_for_selected(&mut self) {
-        if let Some(selected) = self.table_state.selected()
-            && let Some(agent) = self.agents.get(selected)
-        {
-            if self.mux.requires_focus_for_input() {
-                let _ = self
-                    .mux
-                    .switch_to_pane(&agent.pane_id, Some(&agent.window_name));
-            }
-
-            let _ = self.mux.send_keys_to_agent(
-                &agent.pane_id,
-                self.config.dashboard.merge(),
-                self.config.agent.as_deref(),
-            );
-        }
+        let keys = self.config.dashboard.merge().to_string();
+        self.send_keys_to_selected_agent(&keys);
     }
 }

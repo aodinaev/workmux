@@ -153,35 +153,18 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let show_pr_column = app.has_any_pr();
     let show_check_counts = app.config.dashboard.show_check_counts();
 
-    // Check if git data is being refreshed
-    let is_git_fetching = app
-        .is_git_fetching
-        .load(std::sync::atomic::Ordering::Relaxed);
-
-    let git_header =
-        format::build_column_header("Git", is_git_fetching, app.spinner_frame, &app.palette);
-    let pr_header =
-        format::build_column_header("PR", app.is_pr_fetching(), app.spinner_frame, &app.palette);
-
-    let header_style = Style::default().fg(app.palette.header).bold();
-    let mut header_cells = vec![
-        Cell::from("#").style(header_style),
-        Cell::from("Project").style(header_style),
-        Cell::from("Worktree").style(header_style),
-        Cell::from(git_header),
-    ];
-
-    if show_pr_column {
-        header_cells.push(Cell::from(pr_header));
-    }
-
-    header_cells.extend(vec![
-        Cell::from("Status").style(header_style),
-        Cell::from("Time").style(header_style),
-        Cell::from("Title").style(header_style),
-    ]);
-
-    let header = Row::new(header_cells).height(1);
+    let header = format::resource_table_header(
+        format::ResourceHeaderState {
+            palette: &app.palette,
+            spinner_frame: app.spinner_frame,
+            git_fetching: app
+                .is_git_fetching
+                .load(std::sync::atomic::Ordering::Relaxed),
+            pr_fetching: app.is_pr_fetching(),
+        },
+        show_pr_column,
+        &["Status", "Time", "Title"],
+    );
 
     // Group agents by (session, window_name) to detect multi-pane windows
     let mut window_groups: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();

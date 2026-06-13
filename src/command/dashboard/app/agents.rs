@@ -19,6 +19,12 @@ use super::super::sort::SortMode;
 use super::super::spinner::SPINNER_FRAMES;
 use super::App;
 
+/// Selected agent pane target for multiplexer operations.
+pub(crate) struct PaneTarget {
+    pub pane_id: String,
+    pub window_name: String,
+}
+
 impl App {
     /// Apply name and stale filters to the cached agent list, sort, and restore selection.
     /// This is fast (in-memory only) and safe to call on every filter keystroke.
@@ -274,12 +280,34 @@ impl App {
     }
 
     pub fn jump_to_selected(&mut self) {
-        if let Some(selected) = self.table_state.selected()
-            && let Some(agent) = self.agents.get(selected)
-        {
-            let target = agent.pane_id.clone();
-            self.switch_to_pane_and_track(&target);
+        if let Some(target) = self.selected_agent_target() {
+            self.switch_to_pane_and_track(&target.pane_id);
         }
+    }
+
+    pub(crate) fn selected_agent_target(&self) -> Option<PaneTarget> {
+        let selected = self.table_state.selected()?;
+        let agent = self.agents.get(selected)?;
+        Some(PaneTarget {
+            pane_id: agent.pane_id.clone(),
+            window_name: agent.window_name.clone(),
+        })
+    }
+
+    pub(crate) fn send_keys_to_selected_agent(&mut self, keys: &str) {
+        let Some(target) = self.selected_agent_target() else {
+            return;
+        };
+
+        if self.mux.requires_focus_for_input() {
+            let _ = self
+                .mux
+                .switch_to_pane(&target.pane_id, Some(&target.window_name));
+        }
+
+        let _ = self
+            .mux
+            .send_keys_to_agent(&target.pane_id, keys, self.config.agent.as_deref());
     }
 
     pub fn jump_to_index(&mut self, index: usize) {
