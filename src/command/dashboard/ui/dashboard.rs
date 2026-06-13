@@ -557,6 +557,44 @@ fn render_footer_input<'a>(app: &'a App) -> Paragraph<'a> {
     ]))
 }
 
+// ── Shared footer helpers ───────────────────────────────────────
+
+fn footer_cmd(k: &str, l: &str, dimmed: Style, bold_text: Style) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(k.to_string(), dimmed),
+        Span::styled(format!(" {l}"), bold_text),
+    ]
+}
+
+fn footer_toggle(
+    k: &str,
+    l: &str,
+    v: &str,
+    active: bool,
+    dimmed: Style,
+    bold_text: Style,
+    active_style: Style,
+) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(k.to_string(), dimmed),
+        Span::styled(format!(" {l} "), bold_text),
+        Span::styled(format!("({v})"), if active { active_style } else { dimmed }),
+    ]
+}
+
+fn footer_pipe(pipe_style: Style) -> Span<'static> {
+    Span::styled(" \u{2502} ", pipe_style)
+}
+
+fn render_right_help(f: &mut Frame, area: Rect, dimmed: Style, bold_text: Style) {
+    let right = Line::from(vec![
+        Span::styled("?", dimmed),
+        Span::styled(" Help ", bold_text),
+    ]);
+    let cols = Layout::horizontal([Constraint::Fill(1), Constraint::Length(7)]).split(area);
+    f.render_widget(Paragraph::new(right), cols[1]);
+}
+
 /// Normal mode footer with right-pinned help
 fn render_footer_normal(f: &mut Frame, app: &App, area: Rect) {
     let p = &app.palette;
@@ -566,24 +604,6 @@ fn render_footer_normal(f: &mut Frame, app: &App, area: Rect) {
     let pipe_style = Style::default().fg(p.border);
     let active_style = Style::default().fg(p.info);
 
-    let cmd = |k: String, l: String| -> Vec<Span<'static>> {
-        vec![
-            Span::styled(k, dimmed),
-            Span::styled(format!(" {}", l), bold_text),
-        ]
-    };
-    let toggle = |k: String, l: String, v: String, active: bool| -> Vec<Span<'static>> {
-        vec![
-            Span::styled(k, dimmed),
-            Span::styled(format!(" {} ", l), bold_text),
-            Span::styled(
-                format!("({})", v),
-                if active { active_style } else { dimmed },
-            ),
-        ]
-    };
-    let pipe = || -> Span<'static> { Span::styled(" \u{2502} ", pipe_style) };
-
     let sort = app.sort_mode.label();
     let scope = app.scope_mode.label();
     let stale = if app.hide_stale { "hidden" } else { "shown" };
@@ -591,47 +611,57 @@ fn render_footer_normal(f: &mut Frame, app: &App, area: Rect) {
     let stale_active = stale == "hidden";
 
     let mut s: Vec<Span<'static>> = vec![Span::raw("  ")];
-    s.extend(cmd("i".into(), "Input".into()));
-    s.push(pipe());
-    s.extend(cmd("d".into(), "Diff".into()));
-    s.push(pipe());
-    s.extend(cmd("o".into(), "PR".into()));
-    s.push(pipe());
-    s.extend(cmd("1-9".into(), "Jump".into()));
-    s.push(pipe());
-    s.extend(toggle("s".into(), "Sort".into(), sort.to_string(), true));
-    s.push(pipe());
-    s.extend(toggle(
-        "F".into(),
-        "Scope".into(),
-        scope.to_string(),
-        scope_active,
+    s.extend(footer_cmd("i", "Input", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("d", "Diff", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("o", "PR", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("1-9", "Jump", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_toggle(
+        "s",
+        "Sort",
+        sort,
+        true,
+        dimmed,
+        bold_text,
+        active_style,
     ));
-    s.push(pipe());
-    s.extend(toggle(
-        "f".into(),
-        "Stale".into(),
-        stale.to_string(),
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_toggle(
+        "F",
+        "Scope",
+        scope,
+        scope_active,
+        dimmed,
+        bold_text,
+        active_style,
+    ));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_toggle(
+        "f",
+        "Stale",
+        stale,
         stale_active,
+        dimmed,
+        bold_text,
+        active_style,
     ));
     if !app.filter_text.is_empty() {
-        s.push(pipe());
-        s.extend(cmd("/".into(), app.filter_text.clone()));
+        s.push(footer_pipe(pipe_style));
+        s.extend(footer_cmd("/", &app.filter_text, dimmed, bold_text));
     }
-    s.push(pipe());
-    s.extend(cmd("Tab".into(), "Worktrees".into()));
-    s.push(pipe());
-    s.extend(cmd("q".into(), "Quit".into()));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("Tab", "Worktrees", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("q", "Quit", dimmed, bold_text));
 
     // Split footer: left commands, right-pinned help
-    let right = Line::from(vec![
-        Span::styled("?", dimmed),
-        Span::styled(" Help ", bold_text),
-    ]);
     let cols = Layout::horizontal([Constraint::Fill(1), Constraint::Length(7)]).split(area);
 
     f.render_widget(Paragraph::new(Line::from(s)), cols[0]);
-    f.render_widget(Paragraph::new(right), cols[1]);
+    render_right_help(f, area, dimmed, bold_text);
 }
 
 /// Worktree filter mode footer
@@ -659,61 +689,52 @@ fn render_worktree_footer_normal(f: &mut Frame, app: &App, area: Rect) {
 
     let dimmed = Style::default().fg(p.dimmed);
     let bold_text = Style::default().fg(p.text).add_modifier(Modifier::BOLD);
-    let active_style = Style::default().fg(p.accent);
     let pipe_style = Style::default().fg(p.border);
-
-    let cmd = |k: String, l: String| -> Vec<Span<'static>> {
-        vec![
-            Span::styled(k, dimmed),
-            Span::styled(format!(" {}", l), bold_text),
-        ]
-    };
-    let toggle = |k: String, l: String, v: String, active: bool| -> Vec<Span<'static>> {
-        vec![
-            Span::styled(k, dimmed),
-            Span::styled(format!(" {} ", l), bold_text),
-            Span::styled(
-                format!("({})", v),
-                if active { active_style } else { dimmed },
-            ),
-        ]
-    };
-    let pipe = || -> Span<'static> { Span::styled(" \u{2502} ", pipe_style) };
+    let active_style = Style::default().fg(p.accent);
 
     let sort = app.worktree_sort_mode.label();
 
     let mut s: Vec<Span<'static>> = vec![Span::raw("  ")];
-    s.extend(cmd("a".into(), "Add".into()));
-    s.push(pipe());
-    s.extend(cmd("r".into(), "Remove".into()));
-    s.push(pipe());
-    s.extend(cmd("R".into(), "Sweep".into()));
-    s.push(pipe());
-    s.extend(cmd("c".into(), "Close".into()));
-    s.push(pipe());
-    s.extend(cmd("o".into(), "PR".into()));
-    s.push(pipe());
-    s.extend(cmd("1-9".into(), "Jump".into()));
-    s.push(pipe());
-    s.extend(toggle("s".into(), "Sort".into(), sort.to_string(), true));
-    s.push(pipe());
-    s.extend(cmd("p".into(), "Project".into()));
+    s.extend(footer_cmd("a", "Add", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("r", "Remove", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("R", "Sweep", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("c", "Close", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("o", "PR", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("1-9", "Jump", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_toggle(
+        "s",
+        "Sort",
+        sort,
+        true,
+        dimmed,
+        bold_text,
+        active_style,
+    ));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("p", "Project", dimmed, bold_text));
     if !app.worktree_filter_text.is_empty() {
-        s.push(pipe());
-        s.extend(cmd("/".into(), app.worktree_filter_text.clone()));
+        s.push(footer_pipe(pipe_style));
+        s.extend(footer_cmd(
+            "/",
+            &app.worktree_filter_text,
+            dimmed,
+            bold_text,
+        ));
     }
-    s.push(pipe());
-    s.extend(cmd("Tab".into(), "Agents".into()));
-    s.push(pipe());
-    s.extend(cmd("q".into(), "Quit".into()));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("Tab", "Agents", dimmed, bold_text));
+    s.push(footer_pipe(pipe_style));
+    s.extend(footer_cmd("q", "Quit", dimmed, bold_text));
 
     // Split footer: left commands, right-pinned help
-    let right = Line::from(vec![
-        Span::styled("?", dimmed),
-        Span::styled(" Help ", bold_text),
-    ]);
     let cols = Layout::horizontal([Constraint::Fill(1), Constraint::Length(7)]).split(area);
 
     f.render_widget(Paragraph::new(Line::from(s)), cols[0]);
-    f.render_widget(Paragraph::new(right), cols[1]);
+    render_right_help(f, area, dimmed, bold_text);
 }
