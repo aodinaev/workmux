@@ -400,10 +400,10 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Build column constraints conditionally based on whether PR column is shown
     let mut constraints = vec![
-        Constraint::Length(2),                         // #: jump key
-        Constraint::Length(max_project_width),  // Project: auto-sized
-        Constraint::Length(max_worktree_width), // Worktree: auto-sized
-        Constraint::Length(max_git_width as u16),      // Git: auto-sized
+        Constraint::Length(2),                    // #: jump key
+        Constraint::Length(max_project_width),    // Project: auto-sized
+        Constraint::Length(max_worktree_width),   // Worktree: auto-sized
+        Constraint::Length(max_git_width as u16), // Git: auto-sized
     ];
 
     if show_pr_column {

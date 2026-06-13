@@ -197,6 +197,78 @@ fn is_unmerged(branch: &str) -> Result<Option<String>> {
     }
 }
 
+/// Print the list of worktrees to remove and optionally prompt for confirmation.
+/// Returns `Ok(true)` if removal should proceed, `Ok(false)` if aborted.
+fn prompt_removal_confirmation(
+    to_remove: &[(std::path::PathBuf, String, String)],
+    skipped_uncommitted: &[String],
+    skipped_unmerged: &[String],
+    header: &str,
+    force: bool,
+    emphasize_all: bool,
+) -> Result<bool> {
+    println!("{}", header);
+    for (_, branch, _) in to_remove {
+        println!("  - {}", branch);
+    }
+
+    if !skipped_uncommitted.is_empty() {
+        println!(
+            "\nSkipping {} worktree(s) with uncommitted changes:",
+            skipped_uncommitted.len()
+        );
+        for branch in skipped_uncommitted {
+            println!("  - {}", branch);
+        }
+    }
+
+    if !skipped_unmerged.is_empty() {
+        println!(
+            "\nSkipping {} worktree(s) with unmerged commits:",
+            skipped_unmerged.len()
+        );
+        for branch in skipped_unmerged {
+            println!("  - {}", branch);
+        }
+    }
+
+    if !force {
+        let all_label = if emphasize_all { "ALL " } else { "" };
+        print!(
+            "\nAre you sure you want to remove {}{} worktree(s)? [y/N] ",
+            all_label,
+            to_remove.len(),
+        );
+        io::stdout().flush().context("Failed to flush stdout")?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .context("Failed to read user input")?;
+
+        if input.trim().to_lowercase() != "y" {
+            println!("Aborted.");
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+/// Report removal results: successful and failed removals.
+fn report_removal_results(success_count: usize, failed: &[(String, String)]) {
+    if success_count > 0 {
+        println!("\n✓ Successfully removed {} worktree(s)", success_count);
+    }
+
+    if !failed.is_empty() {
+        eprintln!("\nFailed to remove {} worktree(s):", failed.len());
+        for (branch, error) in failed {
+            eprintln!("  - {}: {}", branch, error);
+        }
+    }
+}
+
 /// Remove all managed worktrees (except main)
 fn run_all(force: bool, keep_branch: bool) -> Result<()> {
     let worktrees = git::list_worktrees()?;
@@ -276,49 +348,16 @@ fn run_all(force: bool, keep_branch: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Show what will be removed
-    println!("The following worktrees will be removed:");
-    for (_, branch, _) in &to_remove {
-        println!("  - {}", branch);
-    }
-
-    if !skipped_uncommitted.is_empty() {
-        println!(
-            "\nSkipping {} worktree(s) with uncommitted changes:",
-            skipped_uncommitted.len()
-        );
-        for branch in &skipped_uncommitted {
-            println!("  - {}", branch);
-        }
-    }
-
-    if !skipped_unmerged.is_empty() {
-        println!(
-            "\nSkipping {} worktree(s) with unmerged commits:",
-            skipped_unmerged.len()
-        );
-        for branch in &skipped_unmerged {
-            println!("  - {}", branch);
-        }
-    }
-
-    // Confirm with user unless --force
-    if !force {
-        print!(
-            "\nAre you sure you want to remove ALL {} worktree(s)? [y/N] ",
-            to_remove.len()
-        );
-        io::stdout().flush().context("Failed to flush stdout")?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .context("Failed to read user input")?;
-
-        if input.trim().to_lowercase() != "y" {
-            println!("Aborted.");
-            return Ok(());
-        }
+    // Show what will be removed and confirm
+    if !prompt_removal_confirmation(
+        &to_remove,
+        &skipped_uncommitted,
+        &skipped_unmerged,
+        "The following worktrees will be removed:",
+        force,
+        true,
+    )? {
+        return Ok(());
     }
 
     // Execute removal
@@ -332,17 +371,7 @@ fn run_all(force: bool, keep_branch: bool) -> Result<()> {
         }
     }
 
-    // Report results
-    if success_count > 0 {
-        println!("\n✓ Successfully removed {} worktree(s)", success_count);
-    }
-
-    if !failed.is_empty() {
-        eprintln!("\nFailed to remove {} worktree(s):", failed.len());
-        for (branch, error) in &failed {
-            eprintln!("  - {}: {}", branch, error);
-        }
-    }
+    report_removal_results(success_count, &failed);
 
     Ok(())
 }
@@ -413,39 +442,16 @@ fn run_gone(force: bool, keep_branch: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Show what will be removed
-    println!("The following worktrees have gone upstreams and will be removed:");
-    for (_, branch, _) in &to_remove {
-        println!("  - {}", branch);
-    }
-
-    if !skipped_uncommitted.is_empty() {
-        println!(
-            "\nSkipping {} worktree(s) with uncommitted changes:",
-            skipped_uncommitted.len()
-        );
-        for branch in &skipped_uncommitted {
-            println!("  - {}", branch);
-        }
-    }
-
-    // Confirm with user unless --force
-    if !force {
-        print!(
-            "\nAre you sure you want to remove {} worktree(s)? [y/N] ",
-            to_remove.len()
-        );
-        io::stdout().flush().context("Failed to flush stdout")?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .context("Failed to read user input")?;
-
-        if input.trim().to_lowercase() != "y" {
-            println!("Aborted.");
-            return Ok(());
-        }
+    // Show what will be removed and confirm
+    if !prompt_removal_confirmation(
+        &to_remove,
+        &skipped_uncommitted,
+        &[],
+        "The following worktrees have gone upstreams and will be removed:",
+        force,
+        false,
+    )? {
+        return Ok(());
     }
 
     // Execute removal
@@ -459,17 +465,7 @@ fn run_gone(force: bool, keep_branch: bool) -> Result<()> {
         }
     }
 
-    // Report results
-    if success_count > 0 {
-        println!("\n✓ Successfully removed {} worktree(s)", success_count);
-    }
-
-    if !failed.is_empty() {
-        eprintln!("\nFailed to remove {} worktree(s):", failed.len());
-        for (branch, error) in &failed {
-            eprintln!("  - {}: {}", branch, error);
-        }
-    }
+    report_removal_results(success_count, &failed);
 
     Ok(())
 }

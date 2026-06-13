@@ -269,10 +269,10 @@ pub fn render_worktree_table(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let mut constraints = vec![
-        Constraint::Length(2),                         // #
-        Constraint::Length(max_project_width),  // Project
-        Constraint::Length(max_worktree_width), // Worktree (+ branch when different)
-        Constraint::Length(max_git_width as u16),      // Git
+        Constraint::Length(2),                    // #
+        Constraint::Length(max_project_width),    // Project
+        Constraint::Length(max_worktree_width),   // Worktree (+ branch when different)
+        Constraint::Length(max_git_width as u16), // Git
     ];
     if show_pr_column {
         constraints.push(Constraint::Length(max_pr_width as u16));
