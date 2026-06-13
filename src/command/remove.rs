@@ -197,6 +197,29 @@ fn is_unmerged(branch: &str) -> Result<Option<String>> {
     }
 }
 
+fn print_skipped_summary(label: &str, uncommitted: &[String], unmerged: &[String]) {
+    if !uncommitted.is_empty() {
+        println!(
+            "\n{} {} worktree(s) with uncommitted changes:",
+            label,
+            uncommitted.len()
+        );
+        for branch in uncommitted {
+            println!("  - {}", branch);
+        }
+    }
+    if !unmerged.is_empty() {
+        println!(
+            "\n{} {} worktree(s) with unmerged commits:",
+            label,
+            unmerged.len()
+        );
+        for branch in unmerged {
+            println!("  - {}", branch);
+        }
+    }
+}
+
 /// Print the list of worktrees to remove and optionally prompt for confirmation.
 /// Returns `Ok(true)` if removal should proceed, `Ok(false)` if aborted.
 fn prompt_removal_confirmation(
@@ -212,25 +235,7 @@ fn prompt_removal_confirmation(
         println!("  - {}", worktree.branch);
     }
 
-    if !skipped_uncommitted.is_empty() {
-        println!(
-            "\nSkipping {} worktree(s) with uncommitted changes:",
-            skipped_uncommitted.len()
-        );
-        for branch in skipped_uncommitted {
-            println!("  - {}", branch);
-        }
-    }
-
-    if !skipped_unmerged.is_empty() {
-        println!(
-            "\nSkipping {} worktree(s) with unmerged commits:",
-            skipped_unmerged.len()
-        );
-        for branch in skipped_unmerged {
-            println!("  - {}", branch);
-        }
-    }
+    print_skipped_summary("Skipping", skipped_uncommitted, skipped_unmerged);
 
     if !force {
         let all_label = if emphasize_all { "ALL " } else { "" };
@@ -437,24 +442,7 @@ fn run_bulk_removal(mode: BulkRemovalMode, force: bool, keep_branch: bool) -> Re
 
     if plan.to_remove.is_empty() {
         println!("{}", mode.no_removable_message());
-        if !skipped_uncommitted.is_empty() {
-            println!(
-                "\nSkipped {} worktree(s) with uncommitted changes:",
-                skipped_uncommitted.len()
-            );
-            for branch in &skipped_uncommitted {
-                println!("  - {}", branch);
-            }
-        }
-        if !skipped_unmerged.is_empty() {
-            println!(
-                "\nSkipped {} worktree(s) with unmerged commits:",
-                skipped_unmerged.len()
-            );
-            for branch in &skipped_unmerged {
-                println!("  - {}", branch);
-            }
-        }
+        print_skipped_summary("Skipped", &skipped_uncommitted, &skipped_unmerged);
         println!("\nUse --force to remove these anyway.");
         return Ok(());
     }
