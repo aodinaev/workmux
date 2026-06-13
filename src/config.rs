@@ -264,53 +264,66 @@ impl Serialize for SidebarWidth {
     }
 }
 
-impl<'de> Deserialize<'de> for SidebarWidth {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de;
+macro_rules! impl_dimension_deserialize {
+    ($name:ident, $dimension:literal, $expect:literal) => {
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                use serde::de;
 
-        struct SidebarWidthVisitor;
+                struct Visitor;
 
-        impl<'de> de::Visitor<'de> for SidebarWidthVisitor {
-            type Value = SidebarWidth;
+                impl<'de> de::Visitor<'de> for Visitor {
+                    type Value = $name;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a number (columns) or a string like \"15%\"")
-            }
-
-            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(SidebarWidth::Absolute(v as u16))
-            }
-
-            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
-                if v < 0 {
-                    return Err(de::Error::custom("width cannot be negative"));
-                }
-                Ok(SidebarWidth::Absolute(v as u16))
-            }
-
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                if let Some(pct) = v.strip_suffix('%') {
-                    let p: u16 = pct
-                        .trim()
-                        .parse()
-                        .map_err(|_| de::Error::custom("invalid percentage"))?;
-                    if p == 0 || p > 100 {
-                        return Err(de::Error::custom("percentage must be 1-100"));
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str($expect)
                     }
-                    Ok(SidebarWidth::Percent(p))
-                } else {
-                    let w: u16 = v
-                        .trim()
-                        .parse()
-                        .map_err(|_| de::Error::custom("invalid width"))?;
-                    Ok(SidebarWidth::Absolute(w))
+
+                    fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                        Ok($name::Absolute(v as u16))
+                    }
+
+                    fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                        if v < 0 {
+                            return Err(de::Error::custom(concat!(
+                                $dimension,
+                                " cannot be negative"
+                            )));
+                        }
+                        Ok($name::Absolute(v as u16))
+                    }
+
+                    fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                        if let Some(pct) = v.strip_suffix('%') {
+                            let p: u16 = pct
+                                .trim()
+                                .parse()
+                                .map_err(|_| de::Error::custom("invalid percentage"))?;
+                            if p == 0 || p > 100 {
+                                return Err(de::Error::custom("percentage must be 1-100"));
+                            }
+                            Ok($name::Percent(p))
+                        } else {
+                            let val: u16 = v
+                                .trim()
+                                .parse()
+                                .map_err(|_| de::Error::custom(concat!("invalid ", $dimension)))?;
+                            Ok($name::Absolute(val))
+                        }
+                    }
                 }
+
+                deserializer.deserialize_any(Visitor)
             }
         }
-
-        deserializer.deserialize_any(SidebarWidthVisitor)
-    }
+    };
 }
+
+impl_dimension_deserialize!(
+    SidebarWidth,
+    "width",
+    "a number (columns) or a string like \"15%\""
+);
 
 /// Sidebar height: either absolute rows or a percentage of terminal height.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,53 +351,11 @@ impl Serialize for SidebarHeight {
     }
 }
 
-impl<'de> Deserialize<'de> for SidebarHeight {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de;
-
-        struct SidebarHeightVisitor;
-
-        impl<'de> de::Visitor<'de> for SidebarHeightVisitor {
-            type Value = SidebarHeight;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a number (rows) or a string like \"10%\"")
-            }
-
-            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(SidebarHeight::Absolute(v as u16))
-            }
-
-            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
-                if v < 0 {
-                    return Err(de::Error::custom("height cannot be negative"));
-                }
-                Ok(SidebarHeight::Absolute(v as u16))
-            }
-
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                if let Some(pct) = v.strip_suffix('%') {
-                    let p: u16 = pct
-                        .trim()
-                        .parse()
-                        .map_err(|_| de::Error::custom("invalid percentage"))?;
-                    if p == 0 || p > 100 {
-                        return Err(de::Error::custom("percentage must be 1-100"));
-                    }
-                    Ok(SidebarHeight::Percent(p))
-                } else {
-                    let h: u16 = v
-                        .trim()
-                        .parse()
-                        .map_err(|_| de::Error::custom("invalid height"))?;
-                    Ok(SidebarHeight::Absolute(h))
-                }
-            }
-        }
-
-        deserializer.deserialize_any(SidebarHeightVisitor)
-    }
-}
+impl_dimension_deserialize!(
+    SidebarHeight,
+    "height",
+    "a number (rows) or a string like \"10%\""
+);
 
 /// Configuration for a single window within a session (session mode only)
 #[derive(Debug, Deserialize, Serialize, Clone)]
