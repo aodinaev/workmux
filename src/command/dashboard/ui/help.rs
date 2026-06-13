@@ -11,6 +11,7 @@ use ratatui::{
 use super::super::app::App;
 use super::super::keymap::{Context, help_rows};
 use super::popup::{centered_rect, popup_block, render_popup};
+use super::theme::ThemePalette;
 
 /// Determine the current keymap context for help display.
 fn get_help_context(app: &App) -> Context {
@@ -359,6 +360,43 @@ pub fn render_sweep(f: &mut Frame, app: &App) {
     render_popup(f, area, paragraph);
 }
 
+/// Render the filter input line showing "/text_" pattern.
+fn render_filter_line(filter: &str, palette: &ThemePalette) -> Line<'static> {
+    if filter.is_empty() {
+        Line::from(vec![
+            Span::styled(" /", Style::default().fg(palette.dimmed)),
+            Span::styled("_", Style::default().fg(palette.dimmed)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(" /", Style::default().fg(palette.dimmed)),
+            Span::styled(filter.to_string(), Style::default().fg(palette.text)),
+            Span::styled("_", Style::default().fg(palette.text)),
+        ])
+    }
+}
+
+/// Render the "No matching X" empty state line.
+fn render_empty_state(text: &str, palette: &ThemePalette) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        text.to_string(),
+        Style::default().fg(palette.dimmed),
+    )])
+}
+
+/// Compute a visible window of items around the cursor for scrolling.
+fn scroll_window(cursor: usize, total: usize, max_visible: usize) -> (usize, usize) {
+    let start = if total <= max_visible || cursor < max_visible / 2 {
+        0
+    } else if cursor + max_visible / 2 >= total {
+        total.saturating_sub(max_visible)
+    } else {
+        cursor - max_visible / 2
+    };
+    let end = (start + max_visible).min(total);
+    (start, end)
+}
+
 /// Render the base branch picker modal.
 pub fn render_base_picker(f: &mut Frame, app: &App) {
     let Some(ref picker) = app.pending_base_picker else {
@@ -393,42 +431,18 @@ pub fn render_base_picker(f: &mut Frame, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Filter input line (always present to keep layout stable)
-    if picker.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette.dimmed)),
-            Span::styled("_", Style::default().fg(palette.dimmed)),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette.dimmed)),
-            Span::styled(picker.filter.clone(), Style::default().fg(palette.text)),
-            Span::styled("_", Style::default().fg(palette.text)),
-        ]));
-    }
+    lines.push(render_filter_line(&picker.filter, palette));
 
     lines.push(Line::from(""));
 
     if filtered.is_empty() {
-        lines.push(Line::from(vec![Span::styled(
-            " No matching branches.",
-            Style::default().fg(palette.dimmed),
-        )]));
+        lines.push(render_empty_state(" No matching branches.", palette));
         // Fill remaining slots so height stays fixed
         for _ in 1..max_visible {
             lines.push(Line::from(""));
         }
     } else {
-        // Compute a window of items around the cursor
-        let total = filtered.len();
-        let start = if total <= max_visible || picker.cursor < max_visible / 2 {
-            0
-        } else if picker.cursor + max_visible / 2 >= total {
-            total.saturating_sub(max_visible)
-        } else {
-            picker.cursor - max_visible / 2
-        };
-        let end = (start + max_visible).min(total);
+        let (start, end) = scroll_window(picker.cursor, filtered.len(), max_visible);
 
         for (fi, &idx) in filtered.iter().enumerate().take(end).skip(start) {
             let branch = &picker.branches[idx];
@@ -496,20 +510,13 @@ pub fn render_project_picker(f: &mut Frame, app: &App) {
 
     // Filter input line (shown when typing)
     if !picker.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette.dimmed)),
-            Span::styled(picker.filter.clone(), Style::default().fg(palette.text)),
-            Span::styled("_", Style::default().fg(palette.text)),
-        ]));
+        lines.push(render_filter_line(&picker.filter, palette));
     }
 
     lines.push(Line::from(""));
 
     if filtered.is_empty() {
-        lines.push(Line::from(vec![Span::styled(
-            " No matching projects.",
-            Style::default().fg(palette.dimmed),
-        )]));
+        lines.push(render_empty_state(" No matching projects.", palette));
     } else {
         for (fi, &idx) in filtered.iter().enumerate() {
             let project = &picker.projects[idx];
