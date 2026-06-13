@@ -420,24 +420,29 @@ mod tests {
         project_root
     }
 
-    #[test]
-    fn test_pi_agent_appends_bin_overlay_after_parent() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project_root = init_git_project(tmp.path());
+    fn custom_agent_config_dir(tmp_path: &Path) -> String {
+        format!("{}/agent-cfg/{{agent}}", tmp_path.display())
+    }
 
+    fn project_mounts_for_test(tmp_path: &Path, vm_name: &str, agent_name: &str) -> Vec<Mount> {
+        let project_root = init_git_project(tmp_path);
         let mut config = Config::default();
-        // Use a custom agent_config_dir so the test doesn't depend on $HOME.
-        config.sandbox.agent_config_dir =
-            Some(format!("{}/agent-cfg/{{agent}}", tmp.path().display()));
+        config.sandbox.agent_config_dir = Some(custom_agent_config_dir(tmp_path));
 
-        let mounts = generate_mounts(
+        generate_mounts(
             &project_root,
             IsolationLevel::Project,
             &config,
-            "test-vm",
-            "pi",
+            vm_name,
+            agent_name,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn test_pi_agent_appends_bin_overlay_after_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mounts = project_mounts_for_test(tmp.path(), "test-vm", "pi");
 
         // Find the parent and bin mounts by guest_path suffix.
         let parent_idx = mounts
@@ -476,20 +481,7 @@ mod tests {
     #[test]
     fn test_omp_agent_mounts_agent_dir_without_bin_overlay() {
         let tmp = tempfile::tempdir().unwrap();
-        let project_root = init_git_project(tmp.path());
-
-        let mut config = Config::default();
-        config.sandbox.agent_config_dir =
-            Some(format!("{}/agent-cfg/{{agent}}", tmp.path().display()));
-
-        let mounts = generate_mounts(
-            &project_root,
-            IsolationLevel::Project,
-            &config,
-            "test-vm",
-            "omp",
-        )
-        .unwrap();
+        let mounts = project_mounts_for_test(tmp.path(), "test-vm", "omp");
 
         assert!(
             mounts.iter().any(|m| m.guest_path.ends_with(".omp/agent")),
@@ -512,20 +504,7 @@ mod tests {
     #[test]
     fn test_non_pi_agent_has_no_bin_overlay() {
         let tmp = tempfile::tempdir().unwrap();
-        let project_root = init_git_project(tmp.path());
-
-        let mut config = Config::default();
-        config.sandbox.agent_config_dir =
-            Some(format!("{}/agent-cfg/{{agent}}", tmp.path().display()));
-
-        let mounts = generate_mounts(
-            &project_root,
-            IsolationLevel::Project,
-            &config,
-            "test-vm",
-            "claude",
-        )
-        .unwrap();
+        let mounts = project_mounts_for_test(tmp.path(), "test-vm", "claude");
 
         assert!(
             !mounts
