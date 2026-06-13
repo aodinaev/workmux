@@ -610,6 +610,31 @@ pub(super) fn layout_after_sidebar_remove(
 mod tests {
     use super::*;
 
+    fn rect(w: u16, h: u16, x: u16, y: u16) -> Rect {
+        Rect { w, h, x, y }
+    }
+
+    fn leaf(w: u16, h: u16, x: u16, y: u16, pane_id: u32) -> LayoutNode {
+        LayoutNode::Leaf {
+            rect: rect(w, h, x, y),
+            pane_id,
+        }
+    }
+
+    fn hsplit(w: u16, h: u16, x: u16, y: u16, children: Vec<LayoutNode>) -> LayoutNode {
+        LayoutNode::HSplit {
+            rect: rect(w, h, x, y),
+            children,
+        }
+    }
+
+    fn vsplit(w: u16, h: u16, x: u16, y: u16, children: Vec<LayoutNode>) -> LayoutNode {
+        LayoutNode::VSplit {
+            rect: rect(w, h, x, y),
+            children,
+        }
+    }
+
     #[test]
     fn test_parse_single_pane() {
         let layout = "1234,80x24,0,0,42";
@@ -820,34 +845,13 @@ mod tests {
 
     #[test]
     fn test_scale_width_vsplit() {
-        let mut node = LayoutNode::VSplit {
-            rect: Rect {
-                w: 100,
-                h: 50,
-                x: 0,
-                y: 0,
-            },
-            children: vec![
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 100,
-                        h: 24,
-                        x: 0,
-                        y: 0,
-                    },
-                    pane_id: 1,
-                },
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 100,
-                        h: 25,
-                        x: 0,
-                        y: 25,
-                    },
-                    pane_id: 2,
-                },
-            ],
-        };
+        let mut node = vsplit(
+            100,
+            50,
+            0,
+            0,
+            vec![leaf(100, 24, 0, 0, 1), leaf(100, 25, 0, 25, 2)],
+        );
 
         scale_width(&mut node, 80, 20);
 
@@ -867,34 +871,13 @@ mod tests {
 
     #[test]
     fn test_scale_height_vsplit_proportional() {
-        let mut node = LayoutNode::VSplit {
-            rect: Rect {
-                w: 100,
-                h: 50,
-                x: 0,
-                y: 0,
-            },
-            children: vec![
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 100,
-                        h: 24,
-                        x: 0,
-                        y: 0,
-                    },
-                    pane_id: 1,
-                },
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 100,
-                        h: 25,
-                        x: 0,
-                        y: 25,
-                    },
-                    pane_id: 2,
-                },
-            ],
-        };
+        let mut node = vsplit(
+            100,
+            50,
+            0,
+            0,
+            vec![leaf(100, 24, 0, 0, 1), leaf(100, 25, 0, 25, 2)],
+        );
 
         scale_height(&mut node, 40, 5);
 
@@ -1096,34 +1079,13 @@ mod tests {
     #[test]
     fn test_prune_collapses_single_child_hsplit() {
         // HSplit{sidebar, content} -> content (collapsed)
-        let node = LayoutNode::HSplit {
-            rect: Rect {
-                w: 186,
-                h: 44,
-                x: 0,
-                y: 0,
-            },
-            children: vec![
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 25,
-                        h: 44,
-                        x: 0,
-                        y: 0,
-                    },
-                    pane_id: 999,
-                },
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 160,
-                        h: 44,
-                        x: 26,
-                        y: 0,
-                    },
-                    pane_id: 100,
-                },
-            ],
-        };
+        let node = hsplit(
+            186,
+            44,
+            0,
+            0,
+            vec![leaf(25, 44, 0, 0, 999), leaf(160, 44, 26, 0, 100)],
+        );
         let result = prune_pane(node, 999).unwrap();
         assert!(matches!(result, LayoutNode::Leaf { pane_id: 100, .. }));
     }
@@ -1131,43 +1093,17 @@ mod tests {
     #[test]
     fn test_prune_preserves_multi_child_hsplit() {
         // HSplit{sidebar, a, b} -> HSplit{a, b}
-        let node = LayoutNode::HSplit {
-            rect: Rect {
-                w: 186,
-                h: 44,
-                x: 0,
-                y: 0,
-            },
-            children: vec![
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 25,
-                        h: 44,
-                        x: 0,
-                        y: 0,
-                    },
-                    pane_id: 999,
-                },
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 80,
-                        h: 44,
-                        x: 26,
-                        y: 0,
-                    },
-                    pane_id: 1,
-                },
-                LayoutNode::Leaf {
-                    rect: Rect {
-                        w: 79,
-                        h: 44,
-                        x: 107,
-                        y: 0,
-                    },
-                    pane_id: 2,
-                },
+        let node = hsplit(
+            186,
+            44,
+            0,
+            0,
+            vec![
+                leaf(25, 44, 0, 0, 999),
+                leaf(80, 44, 26, 0, 1),
+                leaf(79, 44, 107, 0, 2),
             ],
-        };
+        );
         let result = prune_pane(node, 999).unwrap();
         match result {
             LayoutNode::HSplit { children, .. } => {
@@ -1318,8 +1254,17 @@ mod tests {
 
     #[test]
     fn test_remove_top_sidebar_two_content_panes_fill_window() {
-        let layout = "0000,186x44,0,0[186x3,0,0,999,186x20,0,4,100,186x19,0,25,101]";
-        let root = parse_layout(layout).unwrap();
+        let root = vsplit(
+            186,
+            44,
+            0,
+            0,
+            vec![
+                leaf(186, 3, 0, 0, 999),
+                leaf(186, 20, 0, 4, 100),
+                leaf(186, 19, 0, 25, 101),
+            ],
+        );
         let window_h = root.rect().h;
 
         let mut content = prune_pane(root, 999).unwrap();
@@ -1342,9 +1287,23 @@ mod tests {
 
     #[test]
     fn test_remove_top_sidebar_nested_content_fills_height() {
-        let layout =
-            "0000,186x44,0,0[186x3,0,0,999,186x18,0,4{93x18,0,4,1,92x18,94,4,2},186x21,0,23,3]";
-        let root = parse_layout(layout).unwrap();
+        let root = vsplit(
+            186,
+            44,
+            0,
+            0,
+            vec![
+                leaf(186, 3, 0, 0, 999),
+                hsplit(
+                    186,
+                    18,
+                    0,
+                    4,
+                    vec![leaf(93, 18, 0, 4, 1), leaf(92, 18, 94, 4, 2)],
+                ),
+                leaf(186, 21, 0, 23, 3),
+            ],
+        );
         let window_h = root.rect().h;
 
         let mut content = prune_pane(root, 999).unwrap();
