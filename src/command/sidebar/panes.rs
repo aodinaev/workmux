@@ -112,19 +112,7 @@ pub(super) fn create_sidebars_in_all_windows(config: &crate::config::Config) -> 
         .run_and_capture_stdout()?;
 
     debug!(position = ?position, "create_sidebars_in_all_windows: creating sidebars");
-
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (window_id, extent_str) = line.split_once(' ').unwrap_or((line, "0"));
-        let window_extent: u16 = extent_str.parse().unwrap_or(0);
-        let size = super::effective_size_for(config, position, window_extent);
-        let _ = create_sidebar_in_window(window_id, position, size);
-    }
-
-    Ok(())
+    create_sidebars_from_window_output(&output, config, position)
 }
 
 /// Create sidebars in all windows of a specific session (by session_id).
@@ -142,7 +130,14 @@ pub(super) fn create_sidebars_in_session(
         .run_and_capture_stdout()?;
 
     debug!(session_id, position = ?position, "create_sidebars_in_session: creating sidebars");
+    create_sidebars_from_window_output(&output, config, position)
+}
 
+fn create_sidebars_from_window_output(
+    output: &str,
+    config: &crate::config::Config,
+    position: SidebarPosition,
+) -> Result<()> {
     for line in output.lines() {
         let line = line.trim();
         if line.is_empty() {
