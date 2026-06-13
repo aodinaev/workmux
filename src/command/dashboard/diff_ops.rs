@@ -114,6 +114,27 @@ fn reload_unstaged_diff(app: &mut App) {
     }
 }
 
+/// Focus the diff agent pane and send a command, then close the diff modal
+fn focus_and_send(app: &mut App, command: String) {
+    if let ViewMode::Diff(diff) = &app.view_mode {
+        if app.mux.requires_focus_for_input() {
+            let window_hint = app
+                .agents
+                .iter()
+                .find(|a| a.pane_id == diff.pane_id)
+                .map(|a| a.window_name.clone());
+            let _ = app
+                .mux
+                .switch_to_pane(&diff.pane_id, window_hint.as_deref());
+        }
+
+        let _ = app
+            .mux
+            .send_keys_to_agent(&diff.pane_id, &command, app.config.agent.as_deref());
+    }
+    app.close_diff();
+}
+
 impl DiffOps for App {
     /// Stage a single hunk using git apply --cached
     fn stage_hunk(&mut self) -> Result<(), String> {
@@ -503,48 +524,12 @@ impl DiffOps for App {
 
     /// Send commit action to the agent pane and close diff modal
     fn send_commit_to_agent(&mut self) {
-        if let ViewMode::Diff(diff) = &self.view_mode {
-            if self.mux.requires_focus_for_input() {
-                let window_hint = self
-                    .agents
-                    .iter()
-                    .find(|a| a.pane_id == diff.pane_id)
-                    .map(|a| a.window_name.clone());
-                let _ = self
-                    .mux
-                    .switch_to_pane(&diff.pane_id, window_hint.as_deref());
-            }
-
-            let _ = self.mux.send_keys_to_agent(
-                &diff.pane_id,
-                self.config.dashboard.commit(),
-                self.config.agent.as_deref(),
-            );
-        }
-        self.close_diff();
+        focus_and_send(self, self.config.dashboard.commit().to_string());
     }
 
     /// Send merge action to the agent pane and close diff modal
     fn trigger_merge(&mut self) {
-        if let ViewMode::Diff(diff) = &self.view_mode {
-            if self.mux.requires_focus_for_input() {
-                let window_hint = self
-                    .agents
-                    .iter()
-                    .find(|a| a.pane_id == diff.pane_id)
-                    .map(|a| a.window_name.clone());
-                let _ = self
-                    .mux
-                    .switch_to_pane(&diff.pane_id, window_hint.as_deref());
-            }
-
-            let _ = self.mux.send_keys_to_agent(
-                &diff.pane_id,
-                self.config.dashboard.merge(),
-                self.config.agent.as_deref(),
-            );
-        }
-        self.close_diff();
+        focus_and_send(self, self.config.dashboard.merge().to_string());
     }
 
     /// Send commit action to the currently selected agent's pane (from dashboard view)
