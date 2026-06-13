@@ -160,6 +160,26 @@ fn session_opted_out(session_id: &str) -> bool {
 }
 
 /// Get the current tmux session's stable ID (e.g., "$0").
+/// Check whether a window passes the sidebar scope filter.
+///
+/// Returns `true` if the window should be processed, `false` if it should be
+/// skipped.
+fn apply_scope_filter(scope: &SidebarScope, window_id: &str) -> bool {
+    let window_session_id = get_window_session_id(window_id);
+    match scope {
+        SidebarScope::Global => match window_session_id {
+            Some(ref window_sid) if session_opted_out(window_sid) => false,
+            Some(_) => true,
+            None => false,
+        },
+        SidebarScope::Sessions(ids) => {
+            matches!(window_session_id, Some(ref window_sid) if ids.contains(window_sid))
+        }
+        SidebarScope::Off => false,
+    }
+}
+
+/// Get the current tmux session's stable ID (e.g., "$0").
 fn get_current_session_id() -> Result<String> {
     let s = Cmd::new("tmux")
         .args(&["display-message", "-p", "#{session_id}"])
@@ -408,18 +428,8 @@ pub(super) fn reflow_all_to_window_extent(window_extent: Option<u16>) -> Result<
 
     for (window_id, pane_id) in panes::list_sidebar_panes() {
         // Scope filter
-        let window_session_id = get_window_session_id(&window_id);
-        match &scope {
-            SidebarScope::Global => match window_session_id {
-                Some(ref sid) if session_opted_out(sid) => continue,
-                Some(_) => {}
-                None => continue,
-            },
-            SidebarScope::Sessions(ids) => match window_session_id {
-                Some(ref sid) if ids.contains(sid) => {}
-                _ => continue,
-            },
-            SidebarScope::Off => continue,
+        if !apply_scope_filter(&scope, &window_id) {
+            continue;
         }
 
         let format = match position {
@@ -618,18 +628,8 @@ pub fn sync(window_id: Option<&str>) -> Result<()> {
     }
 
     // Session filter: skip windows not in a scoped session (or on lookup failure)
-    let window_session_id = get_window_session_id(&target);
-    match &scope {
-        SidebarScope::Global => match window_session_id {
-            Some(ref window_sid) if session_opted_out(window_sid) => return Ok(()),
-            Some(_) => {}
-            None => return Ok(()),
-        },
-        SidebarScope::Sessions(ids) => match window_session_id {
-            Some(ref window_sid) if ids.contains(window_sid) => {}
-            _ => return Ok(()),
-        },
-        SidebarScope::Off => return Ok(()),
+    if !apply_scope_filter(&scope, &target) {
+        return Ok(());
     }
 
     // Check if this window already has a sidebar
@@ -671,18 +671,8 @@ pub fn reflow(window_id: Option<&str>) -> Result<()> {
     }
 
     // Session filter: skip windows not in a scoped session (or on lookup failure)
-    let window_session_id = get_window_session_id(&target);
-    match &scope {
-        SidebarScope::Global => match window_session_id {
-            Some(ref window_sid) if session_opted_out(window_sid) => return Ok(()),
-            Some(_) => {}
-            None => return Ok(()),
-        },
-        SidebarScope::Sessions(ids) => match window_session_id {
-            Some(ref window_sid) if ids.contains(window_sid) => {}
-            _ => return Ok(()),
-        },
-        SidebarScope::Off => return Ok(()),
+    if !apply_scope_filter(&scope, &target) {
+        return Ok(());
     }
 
     // Find the sidebar pane ID in this window
