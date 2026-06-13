@@ -600,6 +600,23 @@ pub fn toggle_session() -> Result<()> {
     Ok(())
 }
 
+fn get_sidebar_position_and_size(target: &str) -> Result<(SidebarPosition, u16)> {
+    let config = crate::config::Config::load(None).unwrap_or_default();
+    let position = read_sidebar_position(&config);
+    let format = match position {
+        SidebarPosition::Left => "#{window_width}",
+        SidebarPosition::Top => "#{window_height}",
+    };
+    let window_extent: u16 = Cmd::new("tmux")
+        .args(&["display-message", "-t", target, "-p", format])
+        .run_and_capture_stdout()
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    let size = effective_size_for(&config, position, window_extent);
+    Ok((position, size))
+}
+
 /// Resolve window ID from an optional argument, falling back to current window.
 fn resolve_target_window(window_id: Option<&str>) -> Result<String> {
     match window_id {
@@ -637,19 +654,7 @@ pub fn sync(window_id: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::config::Config::load(None).unwrap_or_default();
-    let position = read_sidebar_position(&config);
-    let format = match position {
-        SidebarPosition::Left => "#{window_width}",
-        SidebarPosition::Top => "#{window_height}",
-    };
-    let window_extent: u16 = Cmd::new("tmux")
-        .args(&["display-message", "-t", &target, "-p", format])
-        .run_and_capture_stdout()
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let size = effective_size_for(&config, position, window_extent);
+    let (position, size) = get_sidebar_position_and_size(&target)?;
     create_sidebar_in_window(&target, position, size)?;
 
     Ok(())
@@ -695,19 +700,7 @@ pub fn reflow(window_id: Option<&str>) -> Result<()> {
         return Ok(());
     };
 
-    let config = crate::config::Config::load(None).unwrap_or_default();
-    let position = read_sidebar_position(&config);
-    let format = match position {
-        SidebarPosition::Left => "#{window_width}",
-        SidebarPosition::Top => "#{window_height}",
-    };
-    let window_extent: u16 = Cmd::new("tmux")
-        .args(&["display-message", "-t", &target, "-p", format])
-        .run_and_capture_stdout()
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let size = effective_size_for(&config, position, window_extent);
+    let (position, size) = get_sidebar_position_and_size(&target)?;
 
     layout_tree::reflow_after_sidebar_add(&target, &sidebar_pane_id, position, size);
     Ok(())
