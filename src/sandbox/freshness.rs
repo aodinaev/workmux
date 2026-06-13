@@ -262,6 +262,20 @@ fn get_remote_digest_podman(image: &str) -> Result<String> {
     anyhow::bail!("Could not find digest in podman manifest output");
 }
 
+/// Parse a `sha256:` digest from HTTP response headers.
+fn parse_docker_content_digest_header(headers: &str) -> Option<String> {
+    headers.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim().eq_ignore_ascii_case("docker-content-digest") {
+            let digest = value.trim();
+            if digest.starts_with("sha256:") {
+                return Some(digest.to_string());
+            }
+        }
+        None
+    })
+}
+
 /// Get remote digest for Apple Container via OCI registry HTTP API.
 ///
 /// Apple Container has no remote inspect command, so we query ghcr.io directly
@@ -314,17 +328,9 @@ fn get_remote_digest_apple(image: &str) -> Result<String> {
         anyhow::bail!("Failed to fetch manifest from ghcr.io");
     }
 
-    // Parse Docker-Content-Digest header (case-insensitive)
     let headers = String::from_utf8_lossy(&head_output.stdout);
-    for line in headers.lines() {
-        if let Some((key, value)) = line.split_once(':')
-            && key.trim().eq_ignore_ascii_case("docker-content-digest")
-        {
-            let digest = value.trim();
-            if digest.starts_with("sha256:") {
-                return Ok(digest.to_string());
-            }
-        }
+    if let Some(digest) = parse_docker_content_digest_header(&headers) {
+        return Ok(digest);
     }
 
     anyhow::bail!("No Docker-Content-Digest header in ghcr.io response");
@@ -525,35 +531,19 @@ mod tests {
     #[test]
     fn test_parse_ghcr_docker_content_digest() {
         let headers = "HTTP/2 200\r\ncontent-type: application/vnd.oci.image.index.v1+json\r\nDocker-Content-Digest: sha256:abc123\r\n";
-        let mut found = None;
-        for line in headers.lines() {
-            if let Some((key, value)) = line.split_once(':') {
-                if key.trim().eq_ignore_ascii_case("docker-content-digest") {
-                    let digest = value.trim();
-                    if digest.starts_with("sha256:") {
-                        found = Some(digest.to_string());
-                    }
-                }
-            }
-        }
-        assert_eq!(found.unwrap(), "sha256:abc123");
+        assert_eq!(
+            parse_docker_content_digest_header(headers).unwrap(),
+            "sha256:abc123"
+        );
     }
 
     #[test]
     fn test_parse_ghcr_docker_content_digest_lowercase() {
         let headers = "HTTP/2 200\r\ndocker-content-digest: sha256:def456\r\n";
-        let mut found = None;
-        for line in headers.lines() {
-            if let Some((key, value)) = line.split_once(':') {
-                if key.trim().eq_ignore_ascii_case("docker-content-digest") {
-                    let digest = value.trim();
-                    if digest.starts_with("sha256:") {
-                        found = Some(digest.to_string());
-                    }
-                }
-            }
-        }
-        assert_eq!(found.unwrap(), "sha256:def456");
+        assert_eq!(
+            parse_docker_content_digest_header(headers).unwrap(),
+            "sha256:def456"
+        );
     }
 
     /// Integration tests that require Apple Container and network access.

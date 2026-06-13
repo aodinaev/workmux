@@ -331,6 +331,76 @@ fn write_response(writer: &mut impl Write, response: &RpcResponse) -> Result<()>
     Ok(())
 }
 
+fn stream_child_output<Out, ErrFn>(
+    child: &mut std::process::Child,
+    map_stdout: Out,
+    map_stderr: ErrFn,
+    writer: &mut impl Write,
+) -> Result<std::process::ExitStatus>
+where
+    Out: Fn(String) -> RpcResponse + Send + 'static,
+    ErrFn: Fn(String) -> RpcResponse + Send + 'static,
+{
+    use std::io::Read;
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+
+    let (tx, rx) = std::sync::mpsc::channel::<RpcResponse>();
+
+    let tx_out = tx.clone();
+    let stdout_thread = thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut reader = std::io::BufReader::new(stdout);
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let _ = tx_out.send(map_stdout(data));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let tx_err = tx.clone();
+    let stderr_thread = thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut reader = std::io::BufReader::new(stderr);
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let _ = tx_err.send(map_stderr(data));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    drop(tx);
+
+    let stream_result = (|| -> Result<()> {
+        for response in rx {
+            write_response(writer, &response)?;
+        }
+        Ok(())
+    })();
+
+    if let Err(e) = stream_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(e);
+    }
+
+    stdout_thread.join().ok();
+    stderr_thread.join().ok();
+
+    child.wait().context("failed to wait on child")
+}
+
 // ── Request dispatch ────────────────────────────────────────────────────
 
 fn dispatch_request(request: &RpcRequest, ctx: &RpcContext) -> RpcResponse {
@@ -618,66 +688,12 @@ fn handle_merge(
         }
     };
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    // Stream stdout and stderr as Output responses
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-    let tx_out = tx.clone();
-    let stdout_thread = thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = [0u8; 8192];
-        let mut reader = std::io::BufReader::new(stdout);
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    let _ = tx_out.send(data);
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    let tx_err = tx.clone();
-    let stderr_thread = thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = [0u8; 8192];
-        let mut reader = std::io::BufReader::new(stderr);
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    let _ = tx_err.send(data);
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    drop(tx);
-
-    // Stream responses; kill child on write failure (mirrors handle_exec pattern)
-    let stream_result = (|| -> Result<()> {
-        for chunk in rx {
-            write_response(writer, &RpcResponse::Output { message: chunk })?;
-        }
-        Ok(())
-    })();
-
-    if stream_result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-        return stream_result;
-    }
-
-    stdout_thread.join().ok();
-    stderr_thread.join().ok();
-
-    let status = child.wait()?;
+    let status = stream_child_output(
+        &mut child,
+        |message| RpcResponse::Output { message },
+        |message| RpcResponse::Output { message },
+        writer,
+    )?;
     if status.success() {
         write_response(writer, &RpcResponse::Ok)?;
     } else {
@@ -873,65 +889,12 @@ fn handle_exec(
         }
     };
 
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
-
-    // Read stdout and stderr in threads, collect chunks
-    let (tx, rx) = std::sync::mpsc::channel::<RpcResponse>();
-
-    let tx_out = tx.clone();
-    let stdout_thread = thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = [0u8; 8192];
-        loop {
-            match stdout.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    let _ = tx_out.send(RpcResponse::ExecOutput { data });
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    let tx_err = tx.clone();
-    let stderr_thread = thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = [0u8; 8192];
-        loop {
-            match stderr.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    let _ = tx_err.send(RpcResponse::ExecError { data });
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Drop our sender so rx closes when threads finish
-    drop(tx);
-
-    // Stream responses as they arrive; kill child on write failure
-    let stream_result = (|| -> Result<()> {
-        for response in rx {
-            write_response(writer, &response)?;
-        }
-        Ok(())
-    })();
-
-    if stream_result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-        return stream_result;
-    }
-
-    stdout_thread.join().ok();
-    stderr_thread.join().ok();
-
-    let status = child.wait()?;
+    let status = stream_child_output(
+        &mut child,
+        |data| RpcResponse::ExecOutput { data },
+        |data| RpcResponse::ExecError { data },
+        writer,
+    )?;
     let code = status.code().unwrap_or(1);
     info!(command, code, "host-exec finished");
 
