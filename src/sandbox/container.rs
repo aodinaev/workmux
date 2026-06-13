@@ -778,20 +778,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_args_basic() {
-        let config = make_config();
-        let args = build_docker_run_args(
+    fn test_sandbox_config(excluded_files: Vec<String>) -> SandboxConfig {
+        SandboxConfig {
+            enabled: Some(true),
+            container: ContainerConfig {
+                runtime: Some(SandboxRuntime::Docker),
+                excluded_files: Some(excluded_files),
+                ..Default::default()
+            },
+            image: Some("test-image:latest".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn test_build_args(worktree: &Path, config: &SandboxConfig) -> Vec<String> {
+        build_docker_run_args(
             "claude",
-            &config,
+            config,
             "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
+            worktree,
+            worktree,
             &[],
             None,
             false,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn test_build_args_basic() {
+        let config = make_config();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         assert!(args.contains(&"run".to_string()));
         assert!(args.contains(&"--rm".to_string()));
@@ -805,17 +822,7 @@ mod tests {
     #[test]
     fn test_excluded_files_default_empty() {
         let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         assert!(
             !args.iter().any(|a| a.contains("source=/dev/null")),
@@ -828,28 +835,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(".env"), "SECRET=1").unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![".env".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![".env".to_string()]);
 
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(tmp.path(), &config);
 
         let env_abs = tmp.path().join(".env");
         let expected = format!(
@@ -867,28 +855,9 @@ mod tests {
     fn test_excluded_files_skips_missing() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![".env".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![".env".to_string()]);
 
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(tmp.path(), &config);
 
         assert!(
             !args.iter().any(|a| a.contains("source=/dev/null")),
@@ -963,19 +932,9 @@ mod tests {
         // Secret lives only in the main worktree.
         std::fs::write(main.join(".env"), "SECRET=1").unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![".env".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![".env".to_string()]);
 
-        let args =
-            build_docker_run_args("claude", &config, "claude", &wt, &wt, &[], None, false).unwrap();
+        let args = test_build_args(&wt, &config);
 
         let main_env = main.join(".env");
         let expected_main = format!(
@@ -1009,19 +968,9 @@ mod tests {
 
         std::fs::write(main.join(".env"), "SECRET=1").unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![".env".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![".env".to_string()]);
 
-        let args =
-            build_docker_run_args("claude", &config, "claude", &wt, &wt, &[], None, false).unwrap();
+        let args = test_build_args(&wt, &config);
 
         // The joined path preserves `..`, but critically it is absolute
         // (anchored at the worktree root) so Docker can resolve it.
@@ -1072,28 +1021,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aws")).unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![".aws".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![".aws".to_string()]);
 
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(tmp.path(), &config);
 
         assert!(
             !args.iter().any(|a| a.contains("source=/dev/null")),
@@ -1110,28 +1040,9 @@ mod tests {
         std::fs::write(tmp.path().join("my..env"), "SECRET=1").unwrap();
         std::fs::write(tmp.path().join("foo..bar"), "SECRET=2").unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec!["my..env".to_string(), "foo..bar".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec!["my..env".to_string(), "foo..bar".to_string()]);
 
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(tmp.path(), &config);
 
         let my_env = tmp.path().join("my..env");
         let foo_bar = tmp.path().join("foo..bar");
@@ -1161,31 +1072,12 @@ mod tests {
         let outside = tmp.path().parent().unwrap().join("outside-secret");
         let _ = std::fs::write(&outside, "SECRET=1");
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                excluded_files: Some(vec![
-                    "../outside-secret".to_string(),
-                    "/etc/passwd".to_string(),
-                ]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = test_sandbox_config(vec![
+            "../outside-secret".to_string(),
+            "/etc/passwd".to_string(),
+        ]);
 
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(tmp.path(), &config);
 
         let _ = std::fs::remove_file(&outside);
 
@@ -1217,26 +1109,8 @@ mod tests {
 
     #[test]
     fn test_build_args_docker_includes_add_host() {
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let config = make_config();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         assert!(args.contains(&"--add-host".to_string()));
         assert!(args.contains(&"host.docker.internal:host-gateway".to_string()));
@@ -1721,17 +1595,7 @@ mod tests {
     #[test]
     fn test_build_args_allow_mode_path_no_sbin() {
         let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         let path_arg = args.iter().find(|a| a.starts_with("PATH=")).unwrap();
         assert!(
@@ -1771,17 +1635,7 @@ mod tests {
     #[test]
     fn test_build_args_allow_mode_no_cap_net_admin() {
         let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         // Allow mode should have --user and no --cap-add
         assert!(args.contains(&"--user".to_string()));
@@ -1923,17 +1777,7 @@ mod tests {
     #[test]
     fn test_build_args_docker_no_default_resource_flags() {
         let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_args(Path::new("/tmp/project"), &config);
 
         // Docker should NOT get --memory or --cpus by default
         assert!(!args.contains(&"--memory".to_string()));
