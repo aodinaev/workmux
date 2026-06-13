@@ -40,3 +40,35 @@ pub fn run_isolated_test(test_name: &str, cwd: &Path, envs: &[(&str, &Path)]) {
         stderr
     );
 }
+
+pub fn run_git(repo: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .expect("git command should run");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn init_repo(dir: &Path) {
+    let output = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(dir)
+        .output()
+        .expect("git init should run");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    run_git(dir, &["config", "user.email", "test@example.com"]);
+    run_git(dir, &["config", "user.name", "Test User"]);
+    std::fs::write(dir.join("README.md"), "test\n").unwrap();
+    run_git(dir, &["add", "README.md"]);
+    run_git(dir, &["commit", "-m", "initial"]);
+}
