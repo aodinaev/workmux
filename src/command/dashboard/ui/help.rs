@@ -64,16 +64,6 @@ pub fn render_confirm_remove(f: &mut Frame, app: &App) {
     };
     let palette = &app.palette;
 
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette.dimmed));
-
     // Build content lines
     let mut lines: Vec<Line> = Vec::new();
 
@@ -115,51 +105,33 @@ pub fn render_confirm_remove(f: &mut Frame, app: &App) {
     lines.push(Line::from(""));
 
     // Action line (context-dependent)
+    let branch_label = if plan.keep_branch {
+        " delete branch"
+    } else {
+        " keep branch"
+    };
     let action_line = if plan.is_dirty && !plan.force_armed {
         // Dirty: must press f to arm force
-        Line::from(vec![
-            Span::raw(" "),
-            bold("f"),
-            dim(" force  "),
-            bold("n"),
-            dim(" cancel  "),
-            bold("k"),
-            if plan.keep_branch {
-                dim(" delete branch")
-            } else {
-                dim(" keep branch")
-            },
-        ])
+        render_modal_footer_row(
+            palette,
+            &[("f", " force  "), ("n", " cancel  "), ("k", branch_label)],
+        )
     } else if plan.is_dirty && plan.force_armed {
         // Dirty + force armed: y now available
-        Line::from(vec![
-            Span::raw(" "),
-            bold("y"),
-            dim(" confirm force  "),
-            bold("n"),
-            dim(" cancel  "),
-            bold("k"),
-            if plan.keep_branch {
-                dim(" delete branch")
-            } else {
-                dim(" keep branch")
-            },
-        ])
+        render_modal_footer_row(
+            palette,
+            &[
+                ("y", " confirm force  "),
+                ("n", " cancel  "),
+                ("k", branch_label),
+            ],
+        )
     } else {
         // Clean or unmerged: y available
-        Line::from(vec![
-            Span::raw(" "),
-            bold("y"),
-            dim(" remove  "),
-            bold("n"),
-            dim(" cancel  "),
-            bold("k"),
-            if plan.keep_branch {
-                dim(" delete branch")
-            } else {
-                dim(" keep branch")
-            },
-        ])
+        render_modal_footer_row(
+            palette,
+            &[("y", " remove  "), ("n", " cancel  "), ("k", branch_label)],
+        )
     };
     lines.push(action_line);
 
@@ -261,24 +233,11 @@ pub fn render_sweep(f: &mut Frame, app: &App) {
     };
     let palette = &app.palette;
 
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette.dimmed));
-
     // Empty state
     if sweep.candidates.is_empty() {
         let lines = vec![
             Line::from(""),
-            Line::from(vec![Span::styled(
-                " No merged or gone worktrees found.",
-                Style::default().fg(palette.dimmed),
-            )]),
+            render_empty_state(" No merged or gone worktrees found.", palette),
             Line::from(""),
         ];
 
@@ -305,11 +264,14 @@ pub fn render_sweep(f: &mut Frame, app: &App) {
             // Dirty: greyed out, not selectable
             lines.push(Line::from(vec![
                 Span::styled(cursor, cursor_style),
-                dim(&format!(
-                    "[ ] {} ({}, dirty)",
-                    candidate.handle,
-                    candidate.reason.label()
-                )),
+                render_modal_dim_text(
+                    palette,
+                    &format!(
+                        "[ ] {} ({}, dirty)",
+                        candidate.handle,
+                        candidate.reason.label()
+                    ),
+                ),
             ]));
         } else {
             let checkbox = if candidate.selected { "[x]" } else { "[ ]" };
@@ -317,7 +279,7 @@ pub fn render_sweep(f: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(cursor, cursor_style),
                 Span::styled(format!("{} {} ", checkbox, candidate.handle), style),
-                dim(&format!("({})", candidate.reason.label())),
+                render_modal_dim_text(palette, &format!("({})", candidate.reason.label())),
             ]));
         }
     }
@@ -330,16 +292,15 @@ pub fn render_sweep(f: &mut Frame, app: &App) {
     } else {
         " remove".to_string()
     };
-    lines.push(Line::from(vec![
-        Span::raw(" "),
-        bold("Space"),
-        dim(" toggle  "),
-        bold("Enter"),
-        dim(&remove_label),
-        dim("  "),
-        bold("Esc"),
-        dim(" cancel"),
-    ]));
+    lines.push(render_modal_footer_row(
+        palette,
+        &[
+            ("Space", " toggle  "),
+            ("Enter", &remove_label),
+            ("", "  "),
+            ("Esc", " cancel"),
+        ],
+    ));
 
     // Calculate dimensions
     let height = lines.len() as u16 + 2; // +2 for borders
@@ -384,6 +345,39 @@ fn render_empty_state(text: &str, palette: &ThemePalette) -> Line<'static> {
     )])
 }
 
+fn render_modal_key_text(palette: &ThemePalette, text: &str) -> Span<'static> {
+    Span::styled(
+        text.to_string(),
+        Style::default()
+            .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn render_modal_dim_text(palette: &ThemePalette, text: &str) -> Span<'static> {
+    Span::styled(text.to_string(), Style::default().fg(palette.dimmed))
+}
+
+fn render_modal_footer_row(palette: &ThemePalette, pairs: &[(&str, &str)]) -> Line<'static> {
+    let mut spans = Vec::with_capacity(1 + pairs.len() * 2);
+    spans.push(Span::raw(" "));
+
+    for (key, label) in pairs {
+        if !key.is_empty() {
+            spans.push(render_modal_key_text(palette, key));
+        }
+        spans.push(render_modal_dim_text(palette, label));
+    }
+
+    Line::from(spans)
+}
+
+fn append_blank_lines(lines: &mut Vec<Line>, count: usize) {
+    for _ in 0..count {
+        lines.push(Line::from(""));
+    }
+}
+
 /// Compute a visible window of items around the cursor for scrolling.
 fn scroll_window(cursor: usize, total: usize, max_visible: usize) -> (usize, usize) {
     let start = if total <= max_visible || cursor < max_visible / 2 {
@@ -403,16 +397,6 @@ pub fn render_base_picker(f: &mut Frame, app: &App) {
         return;
     };
     let palette = &app.palette;
-
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette.dimmed));
 
     let filtered = picker.filtered();
 
@@ -438,9 +422,7 @@ pub fn render_base_picker(f: &mut Frame, app: &App) {
     if filtered.is_empty() {
         lines.push(render_empty_state(" No matching branches.", palette));
         // Fill remaining slots so height stays fixed
-        for _ in 1..max_visible {
-            lines.push(Line::from(""));
-        }
+        append_blank_lines(&mut lines, max_visible.saturating_sub(1));
     } else {
         let (start, end) = scroll_window(picker.cursor, filtered.len(), max_visible);
 
@@ -463,21 +445,19 @@ pub fn render_base_picker(f: &mut Frame, app: &App) {
         }
 
         // Fill remaining slots so height stays fixed
-        for _ in (end - start)..max_visible {
-            lines.push(Line::from(""));
-        }
+        append_blank_lines(
+            &mut lines,
+            max_visible.saturating_sub(end.saturating_sub(start)),
+        );
     }
 
     lines.push(Line::from(""));
 
     // Footer
-    lines.push(Line::from(vec![
-        Span::raw(" "),
-        bold("Enter"),
-        dim(" set base  "),
-        bold("Esc"),
-        dim(" cancel"),
-    ]));
+    lines.push(render_modal_footer_row(
+        palette,
+        &[("Enter", " set base  "), ("Esc", " cancel")],
+    ));
 
     let popup_area = centered_rect(f.area(), width, height);
 
@@ -493,16 +473,6 @@ pub fn render_project_picker(f: &mut Frame, app: &App) {
         return;
     };
     let palette = &app.palette;
-
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette.dimmed));
 
     let filtered = picker.filtered();
 
@@ -543,13 +513,10 @@ pub fn render_project_picker(f: &mut Frame, app: &App) {
     lines.push(Line::from(""));
 
     // Footer
-    lines.push(Line::from(vec![
-        Span::raw(" "),
-        bold("Enter"),
-        dim(" switch  "),
-        bold("Esc"),
-        dim(" cancel"),
-    ]));
+    lines.push(render_modal_footer_row(
+        palette,
+        &[("Enter", " switch  "), ("Esc", " cancel")],
+    ));
 
     // Calculate dimensions
     let height = lines.len() as u16 + 2;
@@ -575,16 +542,6 @@ pub fn render_command_palette(f: &mut Frame, app: &App) {
     };
     let palette_ref = &app.palette;
 
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette_ref.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette_ref.dimmed));
-
     let filtered = palette.filtered();
 
     let area = f.area();
@@ -601,44 +558,16 @@ pub fn render_command_palette(f: &mut Frame, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Filter input line
-    if palette.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette_ref.dimmed)),
-            Span::styled("_", Style::default().fg(palette_ref.dimmed)),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette_ref.dimmed)),
-            Span::styled(
-                palette.filter.clone(),
-                Style::default().fg(palette_ref.text),
-            ),
-            Span::styled("_", Style::default().fg(palette_ref.text)),
-        ]));
-    }
+    lines.push(render_filter_line(&palette.filter, palette_ref));
 
     lines.push(Line::from(""));
 
     if filtered.is_empty() {
-        lines.push(Line::from(vec![Span::styled(
-            " No matching commands.",
-            Style::default().fg(palette_ref.dimmed),
-        )]));
-        for _ in 1..max_visible {
-            lines.push(Line::from(""));
-        }
+        lines.push(render_empty_state(" No matching commands.", palette_ref));
+        append_blank_lines(&mut lines, max_visible.saturating_sub(1));
     } else {
-        // Compute a window of items around the cursor
         let total = filtered.len();
-        let start = if total <= max_visible || palette.cursor < max_visible / 2 {
-            0
-        } else if palette.cursor + max_visible / 2 >= total {
-            total.saturating_sub(max_visible)
-        } else {
-            palette.cursor - max_visible / 2
-        };
-        let end = (start + max_visible).min(total);
+        let (start, end) = scroll_window(palette.cursor, total, max_visible);
 
         for (fi, &idx) in filtered.iter().enumerate().take(end).skip(start) {
             let cmd = &palette.commands[idx];
@@ -672,22 +601,19 @@ pub fn render_command_palette(f: &mut Frame, app: &App) {
             lines.push(Line::from(spans));
         }
 
-        // Fill remaining slots so height stays fixed
-        for _ in (end - start)..max_visible {
-            lines.push(Line::from(""));
-        }
+        append_blank_lines(
+            &mut lines,
+            max_visible.saturating_sub(end.saturating_sub(start)),
+        );
     }
 
     lines.push(Line::from(""));
 
     // Footer
-    lines.push(Line::from(vec![
-        Span::raw(" "),
-        bold("Enter"),
-        dim(" run  "),
-        bold("Esc"),
-        dim(" cancel"),
-    ]));
+    lines.push(render_modal_footer_row(
+        palette_ref,
+        &[("Enter", " run  "), ("Esc", " cancel")],
+    ));
 
     let popup_area = centered_rect(f.area(), popup_width, popup_height);
 
@@ -706,16 +632,6 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
     };
     let palette = &app.palette;
 
-    let bold = |s: &str| {
-        Span::styled(
-            s.to_string(),
-            Style::default()
-                .fg(palette.text)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |s: &str| Span::styled(s.to_string(), Style::default().fg(palette.dimmed));
-
     let is_pr_mode = state.mode == AddWorktreeMode::Pr;
 
     let area = f.area();
@@ -731,18 +647,7 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
 
     // Filter input line
-    if state.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette.dimmed)),
-            Span::styled("_", Style::default().fg(palette.dimmed)),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled(" /", Style::default().fg(palette.dimmed)),
-            Span::styled(state.filter.clone(), Style::default().fg(palette.text)),
-            Span::styled("_", Style::default().fg(palette.text)),
-        ]));
-    }
+    lines.push(render_filter_line(&state.filter, palette));
 
     lines.push(Line::from(""));
 
@@ -754,9 +659,7 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                     " Loading PRs...",
                     Style::default().fg(palette.dimmed),
                 )]));
-                for _ in 1..max_visible {
-                    lines.push(Line::from(""));
-                }
+                append_blank_lines(&mut lines, max_visible.saturating_sub(1));
             }
             Some(PrListState::Loaded { prs, .. }) => {
                 let filtered = state.filtered_prs();
@@ -769,19 +672,10 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                         },
                         Style::default().fg(palette.dimmed),
                     )]));
-                    for _ in 1..max_visible {
-                        lines.push(Line::from(""));
-                    }
+                    append_blank_lines(&mut lines, max_visible.saturating_sub(1));
                 } else {
                     let total = filtered.len();
-                    let start = if total <= max_visible || state.cursor < max_visible / 2 {
-                        0
-                    } else if state.cursor + max_visible / 2 >= total {
-                        total.saturating_sub(max_visible)
-                    } else {
-                        state.cursor - max_visible / 2
-                    };
-                    let end = (start + max_visible).min(total);
+                    let (start, end) = scroll_window(state.cursor, total, max_visible);
 
                     for (fi, &idx) in filtered.iter().enumerate().take(end).skip(start) {
                         let pr = &prs[idx];
@@ -803,15 +697,16 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                             Span::styled(pr.title.clone(), title_style),
                         ];
                         if pr.is_draft {
-                            spans.push(dim(" [draft]"));
+                            spans.push(render_modal_dim_text(palette, " [draft]"));
                         }
 
                         lines.push(Line::from(spans));
                     }
 
-                    for _ in (end - start)..max_visible {
-                        lines.push(Line::from(""));
-                    }
+                    append_blank_lines(
+                        &mut lines,
+                        max_visible.saturating_sub(end.saturating_sub(start)),
+                    );
                 }
             }
             Some(PrListState::Error { message }) => {
@@ -819,14 +714,10 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                     format!(" {}", message),
                     Style::default().fg(palette.danger),
                 )]));
-                for _ in 1..max_visible {
-                    lines.push(Line::from(""));
-                }
+                append_blank_lines(&mut lines, max_visible.saturating_sub(1));
             }
             None => {
-                for _ in 0..max_visible {
-                    lines.push(Line::from(""));
-                }
+                append_blank_lines(&mut lines, max_visible);
             }
         }
     } else {
@@ -862,13 +753,9 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                 " Type to search or create...",
                 Style::default().fg(palette.dimmed),
             )]));
-            for _ in 1..max_visible {
-                lines.push(Line::from(""));
-            }
+            append_blank_lines(&mut lines, max_visible.saturating_sub(1));
         } else if filtered.is_empty() {
-            for _ in 0..max_visible {
-                lines.push(Line::from(""));
-            }
+            append_blank_lines(&mut lines, max_visible);
         } else {
             let has_create_row = !state.filter.trim().is_empty();
             let branch_cursor = if has_create_row {
@@ -879,14 +766,7 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
 
             let total = filtered.len();
             let effective_cursor = branch_cursor.unwrap_or(0);
-            let start = if total <= max_visible || effective_cursor < max_visible / 2 {
-                0
-            } else if effective_cursor + max_visible / 2 >= total {
-                total.saturating_sub(max_visible)
-            } else {
-                effective_cursor - max_visible / 2
-            };
-            let end = (start + max_visible).min(total);
+            let (start, end) = scroll_window(effective_cursor, total, max_visible);
 
             for (fi, &idx) in filtered.iter().enumerate().take(end).skip(start) {
                 let branch = &state.branches[idx];
@@ -907,15 +787,16 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
                     Span::styled(branch.clone(), branch_style),
                 ];
                 if is_occupied {
-                    spans.push(dim(" (in use)"));
+                    spans.push(render_modal_dim_text(palette, " (in use)"));
                 }
 
                 lines.push(Line::from(spans));
             }
 
-            for _ in (end - start)..max_visible {
-                lines.push(Line::from(""));
-            }
+            append_blank_lines(
+                &mut lines,
+                max_visible.saturating_sub(end.saturating_sub(start)),
+            );
         }
     }
 
@@ -954,27 +835,24 @@ pub fn render_add_worktree(f: &mut Frame, app: &App) {
 
     // Footer (mode-dependent)
     if is_pr_mode {
-        lines.push(Line::from(vec![
-            Span::raw(" "),
-            bold("Enter"),
-            dim(" checkout  "),
-            bold("^p"),
-            dim(" branches  "),
-            bold("Esc"),
-            dim(" cancel"),
-        ]));
+        lines.push(render_modal_footer_row(
+            palette,
+            &[
+                ("Enter", " checkout  "),
+                ("^p", " branches  "),
+                ("Esc", " cancel"),
+            ],
+        ));
     } else {
-        lines.push(Line::from(vec![
-            Span::raw(" "),
-            bold("Enter"),
-            dim(" select  "),
-            bold("^b"),
-            dim(" base  "),
-            bold("^p"),
-            dim(" PRs  "),
-            bold("Esc"),
-            dim(" cancel"),
-        ]));
+        lines.push(render_modal_footer_row(
+            palette,
+            &[
+                ("Enter", " select  "),
+                ("^b", " base  "),
+                ("^p", " PRs  "),
+                ("Esc", " cancel"),
+            ],
+        ));
     }
     lines.push(Line::from(""));
 
