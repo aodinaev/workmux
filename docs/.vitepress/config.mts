@@ -150,6 +150,7 @@ export default defineConfig({
         items: [
           { text: "add", link: "/reference/commands/add" },
           { text: "merge", link: "/reference/commands/merge" },
+          { text: "rebase", link: "/reference/commands/rebase" },
           { text: "remove", link: "/reference/commands/remove" },
           { text: "list", link: "/reference/commands/list" },
           { text: "open", link: "/reference/commands/open" },

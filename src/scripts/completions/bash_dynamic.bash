@@ -46,7 +46,7 @@ _workmux_dynamic() {
                     return
                 fi
                 ;;
-            open|remove|rm|rename|path|close)
+            open|remove|rm|rename|path|close|rebase)
                 # Positional arg: local handles only
                 if [[ "$cur" != -* ]]; then
                     COMPREPLY=($(compgen -W "$(_workmux_handles)" -- "$cur"))

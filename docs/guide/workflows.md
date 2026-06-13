@@ -124,6 +124,8 @@ If you need to sync with main before you're ready to merge (e.g., to pick up cha
 > /rebase
 ```
 
+The CLI equivalent is `workmux rebase`, which rebases the current or named worktree branch onto its saved base branch (or main when no local base exists).
+
 See [Skills](/guide/skills) for the skill setup.
 
 ### PR-based

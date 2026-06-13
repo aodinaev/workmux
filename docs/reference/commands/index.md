@@ -10,6 +10,7 @@ description: Complete reference for all workmux commands
 | ------------------------------ | --------------------------------------------------- |
 | [`add`](./add)                 | Create a new worktree and tmux window               |
 | [`merge`](./merge)             | Merge a branch and clean up everything              |
+| [`rebase`](./rebase)           | Rebase a worktree branch onto its base branch       |
 | [`remove`](./remove)           | Remove worktrees without merging                    |
 | [`rename`](./rename)           | Rename a worktree, its tmux window, and branch      |
 | [`list`](./list)               | List all worktrees with status                      |

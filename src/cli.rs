@@ -259,6 +259,7 @@ Worktree lifecycle:
   remove       Remove a worktree, tmux window, and branch without merging [rm]
   rename       Rename a worktree, tmux window/session, and optionally branch
   merge        Merge a branch, then clean up the worktree and tmux window
+  rebase       Rebase a worktree branch onto its base branch
   open         Open a tmux window for an existing worktree
   close        Close a worktree's tmux window (keeps the worktree and branch)
   resurrect    Restore worktree windows after a tmux or computer crash
@@ -493,6 +494,13 @@ enum Commands {
         /// Show a system notification on successful merge
         #[arg(long)]
         notification: bool,
+    },
+
+    /// Rebase a worktree branch onto its base branch
+    Rebase {
+        /// Worktree name or branch (defaults to current directory)
+        #[arg(value_parser = WorktreeHandleParser::new())]
+        name: Option<String>,
     },
 
     /// Rename a worktree, its tmux window/session, and (optionally) its branch
@@ -1046,6 +1054,7 @@ pub fn run() -> Result<()> {
             no_hooks,
             notification,
         ),
+        Commands::Rebase { name } => command::rebase::run(name.as_deref()),
         Commands::Remove {
             names,
             gone,
@@ -1388,7 +1397,7 @@ mod tests {
         let wrapper = &output[wrapper_start..];
 
         // The handle commands should appear in the case pattern
-        for cmd in ["open", "remove", "close", "merge"] {
+        for cmd in ["open", "remove", "close", "merge", "rebase"] {
             assert!(wrapper.contains(cmd), "Wrapper should handle {cmd}");
         }
         assert!(
