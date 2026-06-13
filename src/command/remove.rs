@@ -200,7 +200,7 @@ fn is_unmerged(branch: &str) -> Result<Option<String>> {
 /// Print the list of worktrees to remove and optionally prompt for confirmation.
 /// Returns `Ok(true)` if removal should proceed, `Ok(false)` if aborted.
 fn prompt_removal_confirmation(
-    to_remove: &[(std::path::PathBuf, String, String)],
+    to_remove: &[BulkRemovableWorktree],
     skipped_uncommitted: &[String],
     skipped_unmerged: &[String],
     header: &str,
@@ -208,8 +208,8 @@ fn prompt_removal_confirmation(
     emphasize_all: bool,
 ) -> Result<bool> {
     println!("{}", header);
-    for (_, branch, _) in to_remove {
-        println!("  - {}", branch);
+    for worktree in to_remove {
+        println!("  - {}", worktree.branch);
     }
 
     if !skipped_uncommitted.is_empty() {
@@ -269,35 +269,108 @@ fn report_removal_results(success_count: usize, failed: &[(String, String)]) {
     }
 }
 
-/// Remove all managed worktrees (except main)
-fn run_all(force: bool, keep_branch: bool) -> Result<()> {
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum BulkSkipReason {
+    Uncommitted,
+    Unmerged,
+}
+
+struct BulkSkippedWorktree {
+    branch: String,
+    reason: BulkSkipReason,
+}
+
+struct BulkRemovableWorktree {
+    branch: String,
+    handle: String,
+}
+
+struct BulkRemovalPlan {
+    to_remove: Vec<BulkRemovableWorktree>,
+    skipped: Vec<BulkSkippedWorktree>,
+}
+
+enum BulkRemovalMode {
+    All,
+    Gone(std::collections::HashSet<String>),
+}
+
+impl BulkRemovalMode {
+    fn confirmation_header(&self) -> &'static str {
+        match self {
+            BulkRemovalMode::All => "The following worktrees will be removed:",
+            BulkRemovalMode::Gone(_) => {
+                "The following worktrees have gone upstreams and will be removed:"
+            }
+        }
+    }
+
+    fn empty_scan_message(&self) -> &'static str {
+        match self {
+            BulkRemovalMode::All => "No worktrees to remove.",
+            BulkRemovalMode::Gone(_) => "No worktrees with gone upstreams found.",
+        }
+    }
+
+    fn no_removable_message(&self) -> &'static str {
+        match self {
+            BulkRemovalMode::All => "No removable worktrees found.",
+            BulkRemovalMode::Gone(_) => "No worktrees to remove.",
+        }
+    }
+
+    fn should_consider_branch(&self, branch: &str) -> bool {
+        match self {
+            BulkRemovalMode::All => true,
+            BulkRemovalMode::Gone(gone_branches) => gone_branches.contains(branch),
+        }
+    }
+
+    fn allow_unmerged_skip(&self) -> bool {
+        matches!(self, BulkRemovalMode::All)
+    }
+
+    fn prompt_emphasize_all(&self) -> bool {
+        matches!(self, BulkRemovalMode::All)
+    }
+}
+
+fn collect_bulk_removal_plan(
+    mode: &BulkRemovalMode,
+    force: bool,
+    keep_branch: bool,
+) -> Result<BulkRemovalPlan> {
     let worktrees = git::list_worktrees()?;
     let main_branch = git::get_default_branch()?;
     let main_worktree_root = git::get_main_worktree_root()?;
 
-    let mut to_remove: Vec<(PathBuf, String, String)> = Vec::new();
-    let mut skipped_uncommitted: Vec<String> = Vec::new();
-    let mut skipped_unmerged: Vec<String> = Vec::new();
+    let mut plan = BulkRemovalPlan {
+        to_remove: Vec::new(),
+        skipped: Vec::new(),
+    };
 
     for (path, branch) in worktrees {
-        // Skip main branch/worktree and detached HEAD
         if branch == main_branch || branch == "(detached)" {
             continue;
         }
 
-        // Skip the main worktree itself (safety check)
         if path == main_worktree_root {
             continue;
         }
 
-        // Check for uncommitted changes
-        if !force && path.exists() && git::has_uncommitted_changes(&path).unwrap_or(false) {
-            skipped_uncommitted.push(branch);
+        if !mode.should_consider_branch(&branch) {
             continue;
         }
 
-        // Check for unmerged commits (only when deleting the branch)
-        if !force && !keep_branch {
+        if !force && path.exists() && git::has_uncommitted_changes(&path).unwrap_or(false) {
+            plan.skipped.push(BulkSkippedWorktree {
+                branch,
+                reason: BulkSkipReason::Uncommitted,
+            });
+            continue;
+        }
+
+        if mode.allow_unmerged_skip() && !force && !keep_branch {
             let base = git::get_branch_base(&branch)
                 .ok()
                 .unwrap_or_else(|| main_branch.clone());
@@ -305,7 +378,10 @@ fn run_all(force: bool, keep_branch: bool) -> Result<()> {
                 && let Ok(unmerged_branches) = git::get_unmerged_branches(&merge_base)
                 && unmerged_branches.contains(&branch)
             {
-                skipped_unmerged.push(branch);
+                plan.skipped.push(BulkSkippedWorktree {
+                    branch,
+                    reason: BulkSkipReason::Unmerged,
+                });
                 continue;
             }
         }
@@ -316,16 +392,51 @@ fn run_all(force: bool, keep_branch: bool) -> Result<()> {
             .unwrap_or(&branch)
             .to_string();
 
-        to_remove.push((path, branch, handle));
+        plan.to_remove
+            .push(BulkRemovableWorktree { branch, handle });
     }
 
-    if to_remove.is_empty() && skipped_uncommitted.is_empty() && skipped_unmerged.is_empty() {
-        println!("No worktrees to remove.");
+    Ok(plan)
+}
+
+fn split_skipped_worktrees(skipped: &[BulkSkippedWorktree], reason: BulkSkipReason) -> Vec<String> {
+    skipped
+        .iter()
+        .filter(|worktree| worktree.reason == reason)
+        .map(|worktree| worktree.branch.clone())
+        .collect()
+}
+
+fn execute_bulk_removals(
+    to_remove: &[BulkRemovableWorktree],
+    keep_branch: bool,
+) -> (usize, Vec<(String, String)>) {
+    let mut success_count = 0;
+    let mut failed: Vec<(String, String)> = Vec::new();
+
+    for worktree in to_remove {
+        match remove_worktree(&worktree.handle, true, keep_branch) {
+            Ok(()) => success_count += 1,
+            Err(e) => failed.push((worktree.branch.clone(), e.to_string())),
+        }
+    }
+
+    (success_count, failed)
+}
+
+fn run_bulk_removal(mode: BulkRemovalMode, force: bool, keep_branch: bool) -> Result<()> {
+    let plan = collect_bulk_removal_plan(&mode, force, keep_branch)?;
+
+    let skipped_uncommitted = split_skipped_worktrees(&plan.skipped, BulkSkipReason::Uncommitted);
+    let skipped_unmerged = split_skipped_worktrees(&plan.skipped, BulkSkipReason::Unmerged);
+
+    if plan.to_remove.is_empty() && skipped_uncommitted.is_empty() && skipped_unmerged.is_empty() {
+        println!("{}", mode.empty_scan_message());
         return Ok(());
     }
 
-    if to_remove.is_empty() {
-        println!("No removable worktrees found.");
+    if plan.to_remove.is_empty() {
+        println!("{}", mode.no_removable_message());
         if !skipped_uncommitted.is_empty() {
             println!(
                 "\nSkipped {} worktree(s) with uncommitted changes:",
@@ -348,126 +459,33 @@ fn run_all(force: bool, keep_branch: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Show what will be removed and confirm
     if !prompt_removal_confirmation(
-        &to_remove,
+        &plan.to_remove,
         &skipped_uncommitted,
         &skipped_unmerged,
-        "The following worktrees will be removed:",
+        mode.confirmation_header(),
         force,
-        true,
+        mode.prompt_emphasize_all(),
     )? {
         return Ok(());
     }
 
-    // Execute removal
-    let mut success_count = 0;
-    let mut failed: Vec<(String, String)> = Vec::new();
-
-    for (_, branch, handle) in to_remove {
-        match remove_worktree(&handle, true, keep_branch) {
-            Ok(()) => success_count += 1,
-            Err(e) => failed.push((branch, e.to_string())),
-        }
-    }
-
+    let (success_count, failed) = execute_bulk_removals(&plan.to_remove, keep_branch);
     report_removal_results(success_count, &failed);
-
     Ok(())
+}
+
+/// Remove all managed worktrees (except main)
+fn run_all(force: bool, keep_branch: bool) -> Result<()> {
+    run_bulk_removal(BulkRemovalMode::All, force, keep_branch)
 }
 
 /// Remove worktrees whose upstream remote branch has been deleted
 fn run_gone(force: bool, keep_branch: bool) -> Result<()> {
     // Fetch with prune to update remote-tracking refs
     spinner::with_spinner("Fetching from remote", git::fetch_prune)?;
-
-    let worktrees = git::list_worktrees()?;
-    let main_branch = git::get_default_branch()?;
-    let main_worktree_root = git::get_main_worktree_root()?;
-
     let gone_branches = git::get_gone_branches().unwrap_or_default();
-
-    // Find worktrees whose upstream is gone
-    let mut to_remove: Vec<(PathBuf, String, String)> = Vec::new();
-    let mut skipped_uncommitted: Vec<String> = Vec::new();
-
-    for (path, branch) in worktrees {
-        // Skip main branch/worktree and detached HEAD
-        if branch == main_branch || branch == "(detached)" {
-            continue;
-        }
-
-        // Skip the main worktree itself
-        if path == main_worktree_root {
-            continue;
-        }
-
-        // Check if upstream is gone
-        if !gone_branches.contains(&branch) {
-            continue;
-        }
-
-        // Check for uncommitted changes
-        if !force && path.exists() && git::has_uncommitted_changes(&path).unwrap_or(false) {
-            skipped_uncommitted.push(branch);
-            continue;
-        }
-
-        let handle = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&branch)
-            .to_string();
-
-        to_remove.push((path, branch, handle));
-    }
-
-    if to_remove.is_empty() && skipped_uncommitted.is_empty() {
-        println!("No worktrees with gone upstreams found.");
-        return Ok(());
-    }
-
-    if to_remove.is_empty() {
-        println!("No worktrees to remove.");
-        if !skipped_uncommitted.is_empty() {
-            println!(
-                "\nSkipped {} worktree(s) with uncommitted changes:",
-                skipped_uncommitted.len()
-            );
-            for branch in &skipped_uncommitted {
-                println!("  - {}", branch);
-            }
-            println!("\nUse --force to remove these anyway.");
-        }
-        return Ok(());
-    }
-
-    // Show what will be removed and confirm
-    if !prompt_removal_confirmation(
-        &to_remove,
-        &skipped_uncommitted,
-        &[],
-        "The following worktrees have gone upstreams and will be removed:",
-        force,
-        false,
-    )? {
-        return Ok(());
-    }
-
-    // Execute removal
-    let mut success_count = 0;
-    let mut failed: Vec<(String, String)> = Vec::new();
-
-    for (_, branch, handle) in to_remove {
-        match remove_worktree(&handle, true, keep_branch) {
-            Ok(()) => success_count += 1,
-            Err(e) => failed.push((branch, e.to_string())),
-        }
-    }
-
-    report_removal_results(success_count, &failed);
-
-    Ok(())
+    run_bulk_removal(BulkRemovalMode::Gone(gone_branches), force, keep_branch)
 }
 
 /// Execute the actual worktree removal
