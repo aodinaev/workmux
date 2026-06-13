@@ -47,6 +47,10 @@ fn compute_pane_suffixes(agents: &[AgentPane]) -> Vec<String> {
         .collect()
 }
 
+fn stale_color(palette: &ThemePalette, is_stale: bool, color: Color) -> Color {
+    if is_stale { palette.dimmed } else { color }
+}
+
 /// Format PR check status for sidebar display, fitting within `available_width`.
 pub(crate) fn format_sidebar_pr_status(
     pr: Option<&crate::github::PrSummary>,
@@ -80,10 +84,10 @@ pub(crate) fn format_sidebar_pr_status(
     };
     let style = if is_stale {
         Style::default()
-            .fg(palette.dimmed)
+            .fg(stale_color(palette, is_stale, color))
             .add_modifier(Modifier::DIM)
     } else {
-        Style::default().fg(color)
+        Style::default().fg(stale_color(palette, is_stale, color))
     };
     let full = counts
         .map(|(passed, total)| {
@@ -126,21 +130,9 @@ pub(crate) fn format_sidebar_git_stats(
     let icons = crate::nerdfont::git_icons();
 
     // When stale, force all colors to dimmed
-    let success = if is_stale {
-        palette.dimmed
-    } else {
-        palette.success
-    };
-    let danger = if is_stale {
-        palette.dimmed
-    } else {
-        palette.danger
-    };
-    let accent = if is_stale {
-        palette.dimmed
-    } else {
-        palette.accent
-    };
+    let success = stale_color(palette, is_stale, palette.success);
+    let danger = stale_color(palette, is_stale, palette.danger);
+    let accent = stale_color(palette, is_stale, palette.accent);
 
     let has_committed = status.lines_added > 0 || status.lines_removed > 0;
     let has_uncommitted =
@@ -166,11 +158,7 @@ pub(crate) fn format_sidebar_git_stats(
     // Build rebase indicator (shown first, highest priority)
     let mut rebase_spans: Vec<(String, Style)> = Vec::new();
     if status.is_rebasing {
-        let rebase_color = if is_stale {
-            palette.dimmed
-        } else {
-            palette.warning
-        };
+        let rebase_color = stale_color(palette, is_stale, palette.warning);
         rebase_spans.push((icons.rebase.to_string(), Style::default().fg(rebase_color)));
     }
 
@@ -313,16 +301,8 @@ pub(crate) fn format_committed_spans(
         return (Vec::new(), 0);
     }
 
-    let success = if is_stale {
-        palette.dimmed
-    } else {
-        palette.success
-    };
-    let danger = if is_stale {
-        palette.dimmed
-    } else {
-        palette.danger
-    };
+    let success = stale_color(palette, is_stale, palette.success);
+    let danger = stale_color(palette, is_stale, palette.danger);
     let style_a = Style::default().fg(success).add_modifier(Modifier::DIM);
     let style_r = Style::default().fg(danger).add_modifier(Modifier::DIM);
 
@@ -365,21 +345,9 @@ pub(crate) fn format_uncommitted_spans(
     }
 
     let icons = crate::nerdfont::git_icons();
-    let success = if is_stale {
-        palette.dimmed
-    } else {
-        palette.success
-    };
-    let danger = if is_stale {
-        palette.dimmed
-    } else {
-        palette.danger
-    };
-    let accent = if is_stale {
-        palette.dimmed
-    } else {
-        palette.accent
-    };
+    let success = stale_color(palette, is_stale, palette.success);
+    let danger = stale_color(palette, is_stale, palette.danger);
+    let accent = stale_color(palette, is_stale, palette.accent);
 
     let icon = (icons.diff.to_string(), Style::default().fg(accent));
     let added = (status.uncommitted_added > 0).then(|| {
@@ -425,11 +393,7 @@ pub(crate) fn format_rebase_spans(
         return (Vec::new(), 0);
     }
     let icons = crate::nerdfont::git_icons();
-    let color = if is_stale {
-        palette.dimmed
-    } else {
-        palette.warning
-    };
+    let color = stale_color(palette, is_stale, palette.warning);
     let icon = (icons.rebase.to_string(), Style::default().fg(color));
     pick_fitting_variant(vec![vec![icon]], max_width)
 }
