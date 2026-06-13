@@ -774,18 +774,14 @@ impl Multiplexer for KittyBackend {
         let pane = panes.into_iter().find(|p| p.window_id == pane_id_num);
 
         match pane {
-            Some(p) => Ok(Some(LivePaneInfo {
-                pid: Some(p.foreground_pid.unwrap_or(p.pid)),
-                current_command: p.foreground_command.or_else(|| Some("unknown".to_string())),
-                working_dir: p.cwd,
-                title: if p.title.is_empty() {
-                    None
-                } else {
-                    Some(p.title)
-                },
-                session: Some(format!("os-window-{}", p.os_window_id)),
-                window: Some(p.tab_title),
-            })),
+            Some(p) => Ok(Some(util::build_live_pane_info(
+                Some(p.foreground_pid.unwrap_or(p.pid)),
+                p.foreground_command.or_else(|| Some("unknown".to_string())),
+                p.cwd,
+                &p.title,
+                format!("os-window-{}", p.os_window_id),
+                p.tab_title,
+            ))),
             None => Ok(None),
         }
     }
@@ -798,18 +794,14 @@ impl Multiplexer for KittyBackend {
 
             result.insert(
                 pane_id,
-                LivePaneInfo {
-                    pid: Some(p.foreground_pid.unwrap_or(p.pid)),
-                    current_command: p.foreground_command.or_else(|| Some("unknown".to_string())),
-                    working_dir: p.cwd,
-                    title: if p.title.is_empty() {
-                        None
-                    } else {
-                        Some(p.title)
-                    },
-                    session: Some(format!("os-window-{}", p.os_window_id)),
-                    window: Some(p.tab_title),
-                },
+                util::build_live_pane_info(
+                    Some(p.foreground_pid.unwrap_or(p.pid)),
+                    p.foreground_command.or_else(|| Some("unknown".to_string())),
+                    p.cwd,
+                    &p.title,
+                    format!("os-window-{}", p.os_window_id),
+                    p.tab_title,
+                ),
             );
         }
 

@@ -108,6 +108,44 @@ impl WezTermBackend {
         Ok(panes)
     }
 
+    /// Get the current foreground process details for a pane tty.
+    fn foreground_process_info(&self, tty_name: Option<&str>) -> (Option<u32>, Option<String>) {
+        let tty = tty_name.map(|t| t.trim_start_matches("/dev/"));
+
+        let pid = tty
+            .and_then(|tty| {
+                Cmd::new("sh")
+                    .args(&[
+                        "-c",
+                        &format!(
+                            "ps -t {} -o pid=,stat= | grep '+' | head -1 | awk '{{print $1}}'",
+                            tty
+                        ),
+                    ])
+                    .run_and_capture_stdout()
+                    .ok()
+            })
+            .and_then(|output| output.trim().parse::<u32>().ok());
+
+        let current_command = tty
+            .and_then(|tty| {
+                Cmd::new("sh")
+                    .args(&[
+                        "-c",
+                        &format!(
+                            "ps -t {} -o stat=,comm= | grep '+' | head -1 | awk '{{print $2}}'",
+                            tty
+                        ),
+                    ])
+                    .run_and_capture_stdout()
+                    .ok()
+            })
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        (pid, current_command)
+    }
+
     /// Get the current workspace name from the environment.
     /// Returns the workspace of the current pane.
     /// Returns None if not running inside WezTerm or if the pane can't be found.
@@ -735,63 +773,15 @@ impl Multiplexer for WezTermBackend {
 
         match pane {
             Some(p) => {
-                // WezTerm doesn't expose PID or current command via CLI list.
-                // We extract both from the TTY using ps.
-                // TODO: Consider using sysinfo crate instead of shelling out to ps.
-                // This would be faster (no subprocess) and more portable (ps flags
-                // differ between BSD/Linux).
-                let tty_name = p.tty_name.as_ref().map(|t| t.trim_start_matches("/dev/"));
-
-                // Get foreground process PID (process with '+' in STAT)
-                // This matches what we store in state files (the agent PID, not shell PID)
-                let pid = tty_name
-                    .and_then(|tty| {
-                        Cmd::new("sh")
-                            .args(&[
-                                "-c",
-                                &format!(
-                                    "ps -t {} -o pid=,stat= | grep '+' | head -1 | awk '{{print $1}}'",
-                                    tty
-                                ),
-                            ])
-                            .run_and_capture_stdout()
-                            .ok()
-                    })
-                    .and_then(|output| output.trim().parse::<u32>().ok());
-
-                // Get foreground command (process with '+' in STAT indicates foreground)
-                // This is the actual running command (e.g., "claude", "vim", "zsh")
-                let current_command = tty_name
-                    .and_then(|tty| {
-                        // Find the foreground process group and get its command
-                        // ps -t <tty> -o stat=,comm= shows STAT and COMMAND
-                        // Foreground processes have '+' in STAT (e.g., "S+", "R+")
-                        Cmd::new("sh")
-                            .args(&[
-                                "-c",
-                                &format!(
-                                    "ps -t {} -o stat=,comm= | grep '+' | head -1 | awk '{{print $2}}'",
-                                    tty
-                                ),
-                            ])
-                            .run_and_capture_stdout()
-                            .ok()
-                    })
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-
-                Ok(Some(LivePaneInfo {
+                let (pid, current_command) = self.foreground_process_info(p.tty_name.as_deref());
+                Ok(Some(util::build_live_pane_info(
                     pid,
                     current_command,
-                    working_dir: p.cwd_path(),
-                    title: if p.title.is_empty() {
-                        None
-                    } else {
-                        Some(p.title.clone())
-                    },
-                    session: Some(p.workspace.clone()),
-                    window: Some(p.tab_title.clone()),
-                }))
+                    p.cwd_path(),
+                    &p.title,
+                    p.workspace,
+                    p.tab_title,
+                )))
             }
             None => Ok(None),
         }
@@ -812,56 +802,17 @@ impl Multiplexer for WezTermBackend {
 
         for p in self.list_panes()? {
             let pane_id = p.pane_id.to_string();
-
-            // WezTerm doesn't expose PID or current command via CLI list.
-            // We extract both from the TTY using ps.
-            let tty_name = p.tty_name.as_ref().map(|t| t.trim_start_matches("/dev/"));
-
-            let pid = tty_name
-                .and_then(|tty| {
-                    Cmd::new("sh")
-                        .args(&[
-                            "-c",
-                            &format!(
-                                "ps -t {} -o pid=,stat= | grep '+' | head -1 | awk '{{print $1}}'",
-                                tty
-                            ),
-                        ])
-                        .run_and_capture_stdout()
-                        .ok()
-                })
-                .and_then(|output| output.trim().parse::<u32>().ok());
-
-            let current_command = tty_name
-                .and_then(|tty| {
-                    Cmd::new("sh")
-                        .args(&[
-                            "-c",
-                            &format!(
-                                "ps -t {} -o stat=,comm= | grep '+' | head -1 | awk '{{print $2}}'",
-                                tty
-                            ),
-                        ])
-                        .run_and_capture_stdout()
-                        .ok()
-                })
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-
+            let (pid, current_command) = self.foreground_process_info(p.tty_name.as_deref());
             result.insert(
                 pane_id,
-                LivePaneInfo {
+                util::build_live_pane_info(
                     pid,
                     current_command,
-                    working_dir: p.cwd_path(),
-                    title: if p.title.is_empty() {
-                        None
-                    } else {
-                        Some(p.title.clone())
-                    },
-                    session: Some(p.workspace.clone()),
-                    window: Some(p.tab_title.clone()),
-                },
+                    p.cwd_path(),
+                    &p.title,
+                    p.workspace,
+                    p.tab_title,
+                ),
             );
         }
 

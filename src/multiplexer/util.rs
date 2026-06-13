@@ -3,7 +3,9 @@
 //! These helpers are shared between tmux, WezTerm, and any future backends.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::types::LivePaneInfo;
 
 /// Helper function to add prefix to window name.
 ///
@@ -22,6 +24,29 @@ pub fn is_posix_shell(shell: &str) -> bool {
         .and_then(|s| s.to_str())
         .unwrap_or("sh");
     matches!(shell_name, "bash" | "zsh" | "sh" | "dash" | "ksh" | "ash")
+}
+
+/// Build a `LivePaneInfo` from shared pane fields.
+pub fn build_live_pane_info(
+    pid: Option<u32>,
+    current_command: Option<String>,
+    working_dir: PathBuf,
+    title: &str,
+    session: String,
+    window: String,
+) -> LivePaneInfo {
+    LivePaneInfo {
+        pid,
+        current_command,
+        working_dir,
+        title: if title.is_empty() {
+            None
+        } else {
+            Some(title.to_string())
+        },
+        session: Some(session),
+        window: Some(window),
+    }
 }
 
 /// Rewrites an agent command to inject a prompt file's contents.
