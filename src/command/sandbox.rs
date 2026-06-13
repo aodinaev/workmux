@@ -1015,17 +1015,11 @@ fn run_shell_container(exec: bool, command: Vec<String>, config: &Config) -> Res
         let mut owned_envs: Vec<(String, String)> = Vec::new();
 
         if let Some((proxy_port, ref proxy_token, _)) = proxy {
-            let proxy_url = format!("http://workmux:{}@{}:{}", proxy_token, rpc_host, proxy_port);
-            let no_proxy = format!("localhost,127.0.0.1,{}", rpc_host);
-
-            owned_envs.push(("HTTPS_PROXY".into(), proxy_url.clone()));
-            owned_envs.push(("HTTP_PROXY".into(), proxy_url.clone()));
-            owned_envs.push(("https_proxy".into(), proxy_url.clone()));
-            owned_envs.push(("http_proxy".into(), proxy_url));
-            owned_envs.push(("NO_PROXY".into(), no_proxy.clone()));
-            owned_envs.push(("no_proxy".into(), no_proxy));
-            owned_envs.push(("WM_PROXY_HOST".into(), rpc_host.clone()));
-            owned_envs.push(("WM_PROXY_PORT".into(), proxy_port.to_string()));
+            owned_envs.extend(crate::sandbox::proxy_env_vars(
+                &rpc_host,
+                proxy_port,
+                proxy_token,
+            ));
         }
 
         let env_refs: Vec<(&str, &str)> = owned_envs
