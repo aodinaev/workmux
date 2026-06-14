@@ -942,34 +942,36 @@ fn parse_templates(config: &Config) -> (ParsedTemplates, Option<TemplateError>) 
     )
 }
 
+fn query_tmux_format_for_current_pane(format: &str) -> Option<String> {
+    let pane_id = std::env::var("TMUX_PANE").unwrap_or_default();
+    let mut args = vec!["display-message", "-p"];
+    if !pane_id.is_empty() {
+        args.extend_from_slice(&["-t", &pane_id]);
+    }
+    args.push(format);
+    Cmd::new("tmux")
+        .args(&args)
+        .run_and_capture_stdout()
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+fn query_tmux_u16_for_current_pane(format: &str) -> Option<u16> {
+    query_tmux_format_for_current_pane(format).and_then(|s| s.parse().ok())
+}
+
+fn query_tmux_positive_u16_for_current_pane(format: &str) -> Option<u16> {
+    query_tmux_u16_for_current_pane(format).filter(|&extent| extent > 0)
+}
+
 /// Query the window width for the current tmux pane (standalone for use before
 /// `Self` exists).
 fn query_window_width_for_pane() -> Option<u16> {
-    let pane_id = std::env::var("TMUX_PANE").unwrap_or_default();
-    let mut args = vec!["display-message", "-p"];
-    if !pane_id.is_empty() {
-        args.extend_from_slice(&["-t", &pane_id]);
-    }
-    args.push("#{window_width}");
-    Cmd::new("tmux")
-        .args(&args)
-        .run_and_capture_stdout()
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
+    query_tmux_u16_for_current_pane("#{window_width}")
 }
 
 fn query_window_height_for_pane() -> Option<u16> {
-    let pane_id = std::env::var("TMUX_PANE").unwrap_or_default();
-    let mut args = vec!["display-message", "-p"];
-    if !pane_id.is_empty() {
-        args.extend_from_slice(&["-t", &pane_id]);
-    }
-    args.push("#{window_height}");
-    Cmd::new("tmux")
-        .args(&args)
-        .run_and_capture_stdout()
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
+    query_tmux_u16_for_current_pane("#{window_height}")
 }
 
 /// Query the actual pane width from tmux. Used to verify the sidebar pane
@@ -984,18 +986,7 @@ fn query_pane_height_for_pane() -> Option<u16> {
 }
 
 fn query_pane_extent_for_pane(format: &str) -> Option<u16> {
-    let pane_id = std::env::var("TMUX_PANE").unwrap_or_default();
-    let mut args = vec!["display-message", "-p"];
-    if !pane_id.is_empty() {
-        args.extend_from_slice(&["-t", &pane_id]);
-    }
-    args.push(format);
-    Cmd::new("tmux")
-        .args(&args)
-        .run_and_capture_stdout()
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .filter(|&extent| extent > 0)
+    query_tmux_positive_u16_for_current_pane(format)
 }
 
 /// Parse new template strings, mutating `templates` and the cached strings.
@@ -1295,19 +1286,9 @@ mod tests {
 /// Detect this sidebar's host window using TMUX_PANE (stable, one-time).
 /// Returns (session, window_id).
 fn detect_host_window() -> (Option<String>, Option<String>) {
-    let pane_id = std::env::var("TMUX_PANE").ok().unwrap_or_default();
-    let mut args = vec!["display-message", "-p"];
-    if !pane_id.is_empty() {
-        args.extend_from_slice(&["-t", &pane_id]);
-    }
-    args.push("#{session_name}\t#{window_id}");
-    let output = Cmd::new("tmux")
-        .args(&args)
-        .run_and_capture_stdout()
-        .ok()
-        .unwrap_or_default();
-    let trimmed = output.trim();
-    let mut parts = trimmed
+    let output =
+        query_tmux_format_for_current_pane("#{session_name}\t#{window_id}").unwrap_or_default();
+    let mut parts = output
         .split('\t')
         .map(|s| (!s.is_empty()).then(|| s.to_string()));
     let session = parts.next().flatten();
