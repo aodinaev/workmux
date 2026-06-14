@@ -36,15 +36,6 @@ pub fn setup_environment(
     agent: Option<&str>,
     after_window: Option<String>,
 ) -> Result<CreateResult> {
-    // Resolve agent name through the agents map once, use everywhere
-    let agent = agent.map(|a| {
-        config
-            .agents
-            .get(a)
-            .map(|e| e.command.as_str())
-            .unwrap_or(a)
-    });
-
     debug!(
         branch = branch_name,
         handle = handle,
@@ -375,29 +366,26 @@ fn pre_boot_lima_vm(
         return Ok(None);
     }
 
-    let effective_agent = resolve_effective_agent(config, agent);
     let shell = mux.get_default_shell()?;
 
     // Check if any pane will actually need Lima wrapping by resolving
     // commands the same way setup_panes does (respects run_commands flag).
     let any_pane_needs_lima = panes.iter().any(|pane_config| {
-        let resolved = crate::multiplexer::util::resolve_pane_command(
+        let resolved = crate::multiplexer::util::resolve_pane_command_with_config(
             pane_config.command.as_deref(),
             options.run_pane_commands,
             options.prompt_file_path.as_deref(),
             working_dir,
-            effective_agent,
+            config,
+            agent,
             &shell,
-            config.agent_type.as_deref(),
         );
         if resolved.is_none() {
             return false;
         }
-        let is_agent_pane = pane_config.command.as_deref().is_some_and(|cmd| {
-            effective_agent.is_some_and(|agent_cmd| {
-                pane_runs_agent(cmd, agent_cmd, config.agent_type.as_deref())
-            })
-        });
+        let is_agent_pane = resolved
+            .as_ref()
+            .is_some_and(|resolved| resolved.selected_agent.is_some());
         match config.sandbox.target() {
             crate::config::SandboxTarget::All => true,
             crate::config::SandboxTarget::Agent => is_agent_pane,
@@ -413,23 +401,22 @@ fn pre_boot_lima_vm(
     Ok(Some(vm_name))
 }
 
-fn resolve_effective_agent<'a>(
-    config: &'a config::Config,
-    cli_agent: Option<&'a str>,
-) -> Option<&'a str> {
+fn resolve_effective_agent(config: &config::Config, cli_agent: Option<&str>) -> Option<String> {
     cli_agent
         .map(|agent| {
             config
                 .agents
                 .get(agent)
-                .map(|entry| entry.command.as_str())
-                .unwrap_or(agent)
+                .map(|entry| entry.command_or_default(agent))
+                .unwrap_or_else(|| agent.to_string())
         })
-        .or(config.agent.as_deref())
+        .or_else(|| config.agent.clone())
 }
 
 fn pane_runs_agent(command: &str, agent_command: &str, agent_type: Option<&str>) -> bool {
-    command == "<agent>"
+    let trimmed = command.trim();
+    trimmed == "<agent>"
+        || (trimmed.starts_with("<agent:") && trimmed.ends_with('>'))
         || crate::multiplexer::agent::is_known_agent(command)
         || config::is_agent_command(command, agent_command)
         || agent_type.is_some_and(|kind| config::is_agent_command(command, kind))
@@ -443,11 +430,17 @@ pub fn resolve_pane_configuration(
     let Some(agent_cmd) = agent else {
         return original_panes.to_vec();
     };
+    let resolved_agent = config
+        .agents
+        .get(agent_cmd)
+        .map(|entry| entry.command_or_default(agent_cmd))
+        .unwrap_or_else(|| agent_cmd.to_string());
+    let injected_agent = "<agent>".to_string();
 
     if original_panes.iter().any(|pane| {
         pane.command
             .as_deref()
-            .is_some_and(|cmd| pane_runs_agent(cmd, agent_cmd, config.agent_type.as_deref()))
+            .is_some_and(|cmd| pane_runs_agent(cmd, &resolved_agent, config.agent_type.as_deref()))
     }) {
         return original_panes.to_vec();
     }
@@ -455,17 +448,17 @@ pub fn resolve_pane_configuration(
     let mut panes = original_panes.to_vec();
 
     if let Some(focused) = panes.iter_mut().find(|pane| pane.focus) {
-        focused.command = Some(agent_cmd.to_string());
+        focused.command = Some(injected_agent.clone());
         return panes;
     }
 
     if let Some(first) = panes.get_mut(0) {
-        first.command = Some(agent_cmd.to_string());
+        first.command = Some(injected_agent.clone());
         return panes;
     }
 
     vec![config::PaneConfig {
-        command: Some(agent_cmd.to_string()),
+        command: Some(injected_agent),
         focus: true,
         ..Default::default()
     }]
@@ -602,7 +595,7 @@ mod tests {
             Some("claude"),
         );
         assert_eq!(result[0].command, Some("vim".to_string()));
-        assert_eq!(result[1].command, Some("claude".to_string()));
+        assert_eq!(result[1].command, Some("<agent>".to_string()));
     }
 
     #[test]
@@ -617,7 +610,7 @@ mod tests {
             &make_config_with_agent(Some("claude")),
             Some("claude"),
         );
-        assert_eq!(result[0].command, Some("claude".to_string()));
+        assert_eq!(result[0].command, Some("<agent>".to_string()));
     }
 
     #[test]
@@ -628,8 +621,30 @@ mod tests {
             Some("claude"),
         );
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].command, Some("claude".to_string()));
+        assert_eq!(result[0].command, Some("<agent>".to_string()));
         assert!(result[0].focus);
+    }
+
+    #[test]
+    fn resolve_pane_configuration_preserves_named_profile_selector() {
+        let original_panes = vec![config::PaneConfig {
+            command: Some("vim".to_string()),
+            focus: true,
+            ..Default::default()
+        }];
+        let mut config = make_config_with_agent(Some("cc-work"));
+        config.agents.insert(
+            "cc-work".to_string(),
+            config::AgentEntry {
+                command: Some("claude".to_string()),
+                agent_type: Some("claude".to_string()),
+                args: vec!["-p".to_string()],
+                env: std::collections::BTreeMap::new(),
+            },
+        );
+
+        let result = resolve_pane_configuration(&original_panes, &config, Some("cc-work"));
+        assert_eq!(result[0].command, Some("<agent>".to_string()));
     }
 
     // --- validate_prompt_consumption tests ---
@@ -946,7 +961,7 @@ fn validate_prompt_consumption(
     let consumes_prompt = panes.iter().any(|pane| {
         pane.command
             .as_deref()
-            .map(|cmd| pane_runs_agent(cmd, agent_cmd, config.agent_type.as_deref()))
+            .map(|cmd| pane_runs_agent(cmd, &agent_cmd, config.agent_type.as_deref()))
             .unwrap_or(false)
     });
 

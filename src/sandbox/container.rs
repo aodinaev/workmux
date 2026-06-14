@@ -696,8 +696,8 @@ pub fn wrap_for_container(
     worktree_root: &Path,
     pane_cwd: &Path,
 ) -> Result<String> {
-    // Strip the single leading space that rewrite_agent_command adds for
-    // shell history prevention -- not needed for the supervisor.
+    // Strip the leading history-prevention space before passing the command to
+    // the sandbox supervisor.
     let command = command.strip_prefix(' ').unwrap_or(command);
 
     let mut parts = format!(
@@ -715,7 +715,7 @@ pub fn wrap_for_container(
 
     parts.push_str(&format!(" -- '{}'", shell_escape(command)));
 
-    // Prefix with space to prevent shell history entry (same as rewrite_agent_command)
+    // Prefix with space to prevent shell history entry.
     Ok(format!(" {}", parts))
 }
 

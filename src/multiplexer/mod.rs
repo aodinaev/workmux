@@ -439,15 +439,6 @@ pub trait Multiplexer: Send + Sync {
         let mut focus_pane_id: Option<String> = None;
         let mut zoom_pane_id: Option<String> = None;
         let mut pane_ids: Vec<String> = vec![initial_pane_id.to_string()];
-        // Resolve agent name through the agents map
-        let resolved_task_agent = task_agent.map(|a| {
-            config
-                .agents
-                .get(a)
-                .map(|e| e.command.as_str())
-                .unwrap_or(a)
-        });
-        let effective_agent = resolved_task_agent.or(config.agent.as_deref());
         let shell = self.get_default_shell()?;
 
         for (i, pane_config) in panes.iter().enumerate() {
@@ -458,20 +449,19 @@ pub trait Multiplexer: Send + Sync {
                 continue;
             }
 
-            // Resolve command: handle <agent> placeholder and prompt injection
-            let adjusted_command = util::resolve_pane_command(
+            // Resolve command: handle <agent> placeholders and prompt injection
+            let adjusted_command = util::resolve_pane_command_with_config(
                 pane_config.command.as_deref(),
                 options.run_commands,
                 options.prompt_file_path,
                 working_dir,
-                effective_agent,
+                config,
+                task_agent,
                 &shell,
-                config.agent_type.as_deref(),
             );
 
             let pane_id = if let Some(mut resolved) = adjusted_command {
-                // Use per-pane agent if set, otherwise fall back to window-level agent
-                let pane_agent = resolved.effective_agent.as_deref().or(effective_agent);
+                let is_agent_pane = resolved.selected_agent.is_some();
 
                 // Spawn with handshake so we can send the command after shell is ready
                 let handshake = self.create_handshake()?;
@@ -497,53 +487,41 @@ pub trait Multiplexer: Send + Sync {
 
                 handshake.wait()?;
 
-                // Detect if this is an agent pane for sandbox targeting
-                let is_agent_pane = pane_config.command.as_deref().is_some_and(|cmd| {
-                    let matches_configured_agent = effective_agent.is_some_and(|agent_cmd| {
-                        crate::config::is_agent_command(cmd, agent_cmd)
-                            || config
-                                .agent_type
-                                .as_deref()
-                                .is_some_and(|kind| crate::config::is_agent_command(cmd, kind))
-                    });
-                    cmd == "<agent>" || agent::is_known_agent(cmd) || matches_configured_agent
-                });
-
                 // Inject resume/continue flag for agent panes when requested
                 if is_agent_pane {
                     match &options.resume_mode {
                         crate::multiplexer::types::ResumeMode::Continue => {
-                            let profile = agent::resolve_profile_with_type(
-                                pane_agent,
-                                config.agent_type.as_deref(),
-                            );
-                            if let Some(flag) = profile.continue_flag() {
-                                resolved.command =
-                                    util::inject_skip_permissions_flag(&resolved.command, flag);
-                            } else {
-                                tracing::warn!(
-                                    agent = profile.name(),
-                                    "agent does not support --continue, flag ignored"
-                                );
+                            if let Some(selected_agent) = resolved.selected_agent.as_ref() {
+                                let profile = selected_agent.profile;
+                                if let Some(flag) = profile.continue_flag() {
+                                    resolved.command =
+                                        util::inject_skip_permissions_flag(&resolved.command, flag);
+                                } else {
+                                    tracing::warn!(
+                                        agent = profile.name(),
+                                        "agent does not support --continue, flag ignored"
+                                    );
+                                }
                             }
                         }
                         crate::multiplexer::types::ResumeMode::ForkSession(session_id) => {
-                            let agent_name =
-                                pane_agent.or(config.agent.as_deref()).unwrap_or("claude");
-                            if let Some(forker) =
-                                crate::multiplexer::conversation::resolve_forker(agent_name)
-                            {
-                                let resume_args = forker.resume_args(session_id);
-                                let combined = resume_args.join(" ");
-                                resolved.command = util::inject_skip_permissions_flag(
-                                    &resolved.command,
-                                    &combined,
-                                );
-                            } else {
-                                tracing::warn!(
-                                    agent = agent_name,
-                                    "agent does not support forking, resume flag ignored"
-                                );
+                            if let Some(selected_agent) = resolved.selected_agent.as_ref() {
+                                let agent_name = selected_agent.kind();
+                                if let Some(forker) =
+                                    crate::multiplexer::conversation::resolve_forker(agent_name)
+                                {
+                                    let resume_args = forker.resume_args(session_id);
+                                    let combined = resume_args.join(" ");
+                                    resolved.command = util::inject_skip_permissions_flag(
+                                        &resolved.command,
+                                        &combined,
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        agent = agent_name,
+                                        "agent does not support forking, resume flag ignored"
+                                    );
+                                }
                             }
                         }
                         crate::multiplexer::types::ResumeMode::None => {}
@@ -564,12 +542,12 @@ pub trait Multiplexer: Send + Sync {
                         // (sandbox provides the security boundary, so permission
                         // prompts are unnecessary and break autonomous workflow)
                         let command_to_wrap = if is_agent_pane {
-                            let profile = crate::multiplexer::agent::resolve_profile_with_type(
-                                pane_agent,
-                                config.agent_type.as_deref(),
-                            );
-                            if let Some(flag) = profile.skip_permissions_flag() {
-                                util::inject_skip_permissions_flag(&resolved.command, flag)
+                            if let Some(selected_agent) = resolved.selected_agent.as_ref() {
+                                if let Some(flag) = selected_agent.profile.skip_permissions_flag() {
+                                    util::inject_skip_permissions_flag(&resolved.command, flag)
+                                } else {
+                                    resolved.command.clone()
+                                }
                             } else {
                                 resolved.command.clone()
                             }
@@ -626,8 +604,10 @@ pub trait Multiplexer: Send + Sync {
 
                 // Set working status for agent panes with injected prompts
                 if resolved.prompt_injected
-                    && agent::resolve_profile_with_type(pane_agent, config.agent_type.as_deref())
-                        .needs_auto_status()
+                    && resolved
+                        .selected_agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.profile.needs_auto_status())
                 {
                     let icon = config.status_icons.working();
                     if config.status_format.unwrap_or(true) {

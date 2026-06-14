@@ -53,16 +53,24 @@ Your editor can then detect the prompt file on startup and pass it to its embedd
 
 ## Named agents
 
-Define short names for agent commands in your global config. This is useful when you have multiple accounts, custom wrapper scripts, or commands with long environment variable overrides:
+Define short names for agent profiles in your global config. This is useful when you have multiple accounts, custom wrapper scripts, extra arguments, or environment variable overrides:
 
 ```yaml
 # ~/.config/workmux/config.yaml
 agents:
   cc-work: "claude"
-  cc-personal: "env CLAUDE_CONFIG_DIR=~/.claude-personal claude"
-  cc-bedrock: "env -u CLAUDE_CODE_USE_BEDROCK -u AWS_REGION AWS_PROFILE=prod claude"
-  cc-yolo: "claude --dangerously-skip-permissions"
-  cod: "codex --yolo"
+  cc-personal:
+    type: claude
+    command: claude
+    env:
+      CLAUDE_CONFIG_DIR: ~/.claude-personal
+  cod-mini:
+    type: codex
+    command: codex
+    args:
+      - exec
+      - -m
+      - gpt-5.1-codex-mini
 ```
 
 Use named agents anywhere you'd use an agent name:
@@ -75,16 +83,50 @@ workmux add feature/auth -a cc-work -p "Implement OAuth"
 agent: cc-work
 ```
 
-workmux resolves the name to the full command at load time. The agent profile (prompt injection format, continue/resume flags, skip-permissions flags) is automatically detected from the resolved command, even through `env` wrappers.
-
-For wrapper scripts where the executable name doesn't match a known agent, use the map form with an explicit `type`:
+workmux resolves the name to a structured command before launching panes. The agent profile controls prompt injection format, continue/resume flags, skip-permissions flags, and sandbox behavior. Set `type` when the command is a wrapper or when you omit `command` and want the built-in executable for that agent type:
 
 ```yaml
 agents:
   cc-smart:
-    command: "/path/to/smart-picker"
     type: claude
+    command: /path/to/smart-picker
+    args:
+      - -p
+    env:
+      ANTHROPIC_BASE_URL: http://localhost:18765
+      ANTHROPIC_AUTH_TOKEN:
+        from_env: ANTHROPIC_AUTH_TOKEN
 ```
+
+For example, this profile runs Claude Code through [claude-code-proxy](https://github.com/raine/claude-code-proxy) with Cursor's `composer-2.5-fast` model:
+
+```yaml
+agents:
+  claude-composer-fast:
+    type: claude
+    command: /Users/raine/.local/bin/claude
+    args:
+      - --dangerously-skip-permissions
+    env:
+      ANTHROPIC_BASE_URL: http://localhost:18765
+      ANTHROPIC_AUTH_TOKEN: anything
+      ANTHROPIC_MODEL: composer-2.5-fast
+      ANTHROPIC_SMALL_FAST_MODEL: composer-2.5-fast
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+      CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
+      CLAUDE_CODE_EFFORT_LEVEL: max
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+```
+
+Structured profiles support these fields:
+
+- `type`: Built-in agent behavior to use (`claude`, `gemini`, `codex`, etc.)
+- `command`: Executable or command string to launch. Defaults to `type` or profile name
+- `args`: Literal arguments appended after the command, before injected prompts
+- `env`: Environment variables set for the agent process. Values can be literal strings or `{ from_env: NAME }` to read the value from the launch environment
+
+String entries still work for simple aliases, but structured profiles avoid quoting long commands by hand.
 
 ::: tip
 Named agents are global-only for security. Define them in `~/.config/workmux/config.yaml`, not in project `.workmux.yaml` files. Project configs can reference them but not define them.

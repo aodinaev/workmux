@@ -491,23 +491,74 @@ pub struct Config {
     #[serde(skip)]
     pub agent_type: Option<String>,
 
+    /// Selected agent name before resolving through the agents map.
+    /// Set internally during config loading, not deserialized.
+    #[serde(skip)]
+    pub selected_agent: Option<String>,
+
     /// Container sandbox configuration
     #[serde(default)]
     pub sandbox: SandboxConfig,
 }
 
-/// A named agent entry: either a plain command string or a `{ command, type }` object.
+/// A named agent environment value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AgentEnvValue {
+    Literal(String),
+    FromEnv {
+        #[serde(rename = "from_env")]
+        from_env: String,
+    },
+}
+
+impl AgentEnvValue {
+    pub fn shell_value(&self) -> String {
+        match self {
+            Self::Literal(value) => crate::multiplexer::agent::shell_quote(value),
+            Self::FromEnv { from_env } => format!("\"${}\"", from_env),
+        }
+    }
+}
+
+fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A named agent entry: either a plain command string or a structured launch profile.
 ///
 /// Deserializes from:
 /// - `"claude --flags"` (string shorthand)
 /// - `{ command: "/path/to/wrapper", type: "claude" }` (explicit type override)
+/// - `{ type: "claude", args: ["-p"], env: { KEY: value } }`
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentEntry {
-    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// Explicit agent type override for profile detection.
     /// When set, profile resolution uses this instead of the executable stem.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub agent_type: Option<String>,
+    /// Arguments appended after the executable, before any injected prompt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Environment variables set for this agent process.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, AgentEnvValue>,
+}
+
+impl AgentEntry {
+    pub fn command_or_default(&self, name: &str) -> String {
+        self.command
+            .clone()
+            .or_else(|| self.agent_type.clone())
+            .unwrap_or_else(|| name.to_string())
+    }
 }
 
 impl<'de> Deserialize<'de> for AgentEntry {
@@ -520,24 +571,51 @@ impl<'de> Deserialize<'de> for AgentEntry {
         enum RawEntry {
             String(String),
             Map {
-                command: String,
+                #[serde(default)]
+                command: Option<String>,
                 #[serde(rename = "type")]
                 agent_type: Option<String>,
+                #[serde(default)]
+                args: Vec<String>,
+                #[serde(default)]
+                env: BTreeMap<String, AgentEnvValue>,
             },
         }
 
         match RawEntry::deserialize(deserializer)? {
             RawEntry::String(s) => Ok(AgentEntry {
-                command: s,
+                command: Some(s),
                 agent_type: None,
+                args: Vec::new(),
+                env: BTreeMap::new(),
             }),
             RawEntry::Map {
                 command,
                 agent_type,
-            } => Ok(AgentEntry {
-                command,
-                agent_type,
-            }),
+                args,
+                env,
+            } => {
+                for (key, value) in &env {
+                    if !is_valid_env_name(key) {
+                        return Err(serde::de::Error::custom(format!(
+                            "agent env key must be a valid environment variable name: {key}"
+                        )));
+                    }
+                    if let AgentEnvValue::FromEnv { from_env } = value
+                        && !is_valid_env_name(from_env)
+                    {
+                        return Err(serde::de::Error::custom(format!(
+                            "agent env from_env value must be a valid environment variable name: {from_env}"
+                        )));
+                    }
+                }
+                Ok(AgentEntry {
+                    command,
+                    agent_type,
+                    args,
+                    env,
+                })
+            }
         }
     }
 }
@@ -2081,10 +2159,12 @@ impl Config {
 
         let mut config = global_config.merge(project_config);
 
+        config.selected_agent = Some(final_agent.clone());
+
         // Resolve agent name through agents map
         if let Some(entry) = config.agents.get(&final_agent) {
             config.agent_type = entry.agent_type.clone();
-            config.agent = Some(entry.command.clone());
+            config.agent = Some(entry.command_or_default(&final_agent));
         } else {
             config.agent = Some(final_agent);
         }
@@ -2872,18 +2952,6 @@ pub fn tmux_global_path() -> Option<String> {
     output.strip_prefix("PATH=").map(|s| s.to_string())
 }
 
-pub fn split_first_token(command: &str) -> Option<(&str, &str)> {
-    let trimmed = command.trim_start();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(
-        trimmed
-            .split_once(char::is_whitespace)
-            .unwrap_or((trimmed, "")),
-    )
-}
-
 /// Checks if a command string corresponds to the given agent command.
 ///
 /// Returns true if:
@@ -2927,11 +2995,11 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        AgentIconConfig, AgentIconDetails, AllowedDomainDetails, AllowedDomainEntry, Config,
-        ContainerConfig, ContainerDevice, ExtraMount, LayoutConfig, LimaConfig, NetworkConfig,
-        NetworkPolicy, PaneConfig, SandboxConfig, SandboxRuntime, SandboxTarget, SidebarHeight,
-        SidebarPosition, SidebarWidth, SplitDirection, ToolchainMode, is_agent_command,
-        split_first_token, validate_domain, validate_group_add_entry, validate_layouts_config,
+        AgentEnvValue, AgentIconConfig, AgentIconDetails, AllowedDomainDetails, AllowedDomainEntry,
+        Config, ContainerConfig, ContainerDevice, ExtraMount, LayoutConfig, LimaConfig,
+        NetworkConfig, NetworkPolicy, PaneConfig, SandboxConfig, SandboxRuntime, SandboxTarget,
+        SidebarHeight, SidebarPosition, SidebarWidth, SplitDirection, ToolchainMode,
+        is_agent_command, validate_domain, validate_group_add_entry, validate_layouts_config,
     };
     use tempfile::TempDir;
 
@@ -3161,45 +3229,6 @@ sidebar:
     }
 
     #[test]
-    fn split_first_token_single_word() {
-        assert_eq!(split_first_token("claude"), Some(("claude", "")));
-    }
-
-    #[test]
-    fn split_first_token_with_args() {
-        assert_eq!(
-            split_first_token("claude --verbose"),
-            Some(("claude", "--verbose"))
-        );
-    }
-
-    #[test]
-    fn split_first_token_multiple_spaces() {
-        assert_eq!(
-            split_first_token("claude   --verbose"),
-            Some(("claude", "  --verbose"))
-        );
-    }
-
-    #[test]
-    fn split_first_token_leading_whitespace() {
-        assert_eq!(
-            split_first_token("  claude --verbose"),
-            Some(("claude", "--verbose"))
-        );
-    }
-
-    #[test]
-    fn split_first_token_empty_string() {
-        assert_eq!(split_first_token(""), None);
-    }
-
-    #[test]
-    fn split_first_token_only_whitespace() {
-        assert_eq!(split_first_token("   "), None);
-    }
-
-    #[test]
     fn is_agent_command_placeholder() {
         assert!(is_agent_command("<agent>", "claude"));
         assert!(is_agent_command("  <agent>  ", "gemini"));
@@ -3258,15 +3287,18 @@ agents:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.agents.len(), 3);
         assert_eq!(
-            config.agents.get("cc-work").unwrap().command,
-            "claude --dangerously-skip-permissions"
+            config.agents.get("cc-work").unwrap().command.as_deref(),
+            Some("claude --dangerously-skip-permissions")
         );
         assert!(config.agents.get("cc-work").unwrap().agent_type.is_none());
         assert_eq!(
-            config.agents.get("cc-bedrock").unwrap().command,
-            "env -u CLAUDE_CODE_USE_BEDROCK claude"
+            config.agents.get("cc-bedrock").unwrap().command.as_deref(),
+            Some("env -u CLAUDE_CODE_USE_BEDROCK claude")
         );
-        assert_eq!(config.agents.get("cod").unwrap().command, "codex --yolo");
+        assert_eq!(
+            config.agents.get("cod").unwrap().command.as_deref(),
+            Some("codex --yolo")
+        );
     }
 
     #[test]
@@ -3281,11 +3313,61 @@ agents:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.agents.len(), 2);
         let smart = config.agents.get("cc-smart").unwrap();
-        assert_eq!(smart.command, "/path/to/smart-picker");
+        assert_eq!(smart.command.as_deref(), Some("/path/to/smart-picker"));
         assert_eq!(smart.agent_type.as_deref(), Some("claude"));
         let cod = config.agents.get("cod-plain").unwrap();
-        assert_eq!(cod.command, "codex");
+        assert_eq!(cod.command.as_deref(), Some("codex"));
         assert!(cod.agent_type.is_none());
+    }
+
+    #[test]
+    fn agents_deserialize_env_from_env() {
+        let yaml = r#"
+agents:
+  cc-deepseek:
+    type: claude
+    command: claude
+    env:
+      ANTHROPIC_AUTH_TOKEN:
+        from_env: DEEPSEEK_API_KEY
+      ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let entry = config.agents.get("cc-deepseek").unwrap();
+        assert_eq!(
+            entry.env.get("ANTHROPIC_AUTH_TOKEN"),
+            Some(&AgentEnvValue::FromEnv {
+                from_env: "DEEPSEEK_API_KEY".to_string(),
+            })
+        );
+        assert_eq!(
+            entry.env.get("ANTHROPIC_BASE_URL"),
+            Some(&AgentEnvValue::Literal(
+                "https://api.deepseek.com/anthropic".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn agents_reject_invalid_env_names() {
+        let bad_key = r#"
+agents:
+  cc-bad:
+    type: claude
+    env:
+      BAD-NAME: value
+"#;
+        assert!(serde_yaml::from_str::<Config>(bad_key).is_err());
+
+        let bad_from_env = r#"
+agents:
+  cc-bad:
+    type: claude
+    env:
+      TOKEN:
+        from_env: BAD-NAME
+"#;
+        assert!(serde_yaml::from_str::<Config>(bad_from_env).is_err());
     }
 
     #[test]

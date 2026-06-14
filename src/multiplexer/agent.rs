@@ -4,7 +4,10 @@
 //! known AI coding agents. Adding support for a new agent only requires
 //! implementing this trait.
 
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use crate::config::{AgentEntry, AgentEnvValue, Config};
 
 /// Describes agent-specific behaviors for command rewriting and status handling.
 pub trait AgentProfile: Send + Sync {
@@ -355,6 +358,96 @@ pub fn resolve_profile_with_type(
         return p;
     }
     profile
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, AgentEnvValue>,
+}
+
+impl AgentCommand {
+    pub fn parse(command: &str) -> Option<Self> {
+        let parts = shlex::split(command)?;
+        let (program, args) = parts.split_first()?;
+        Some(Self {
+            program: program.clone(),
+            args: args.to_vec(),
+            env: BTreeMap::new(),
+        })
+    }
+
+    pub fn from_entry(name: &str, entry: &AgentEntry) -> Self {
+        let mut command = entry
+            .command
+            .as_deref()
+            .and_then(Self::parse)
+            .unwrap_or_else(|| Self {
+                program: entry.agent_type.clone().unwrap_or_else(|| name.to_string()),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            });
+        command.args.extend(entry.args.clone());
+        command.env.extend(entry.env.clone());
+        command
+    }
+
+    pub fn shell_string(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.env.is_empty() {
+            parts.push("env".to_string());
+            for (key, value) in &self.env {
+                parts.push(format!("{}={}", key, value.shell_value()));
+            }
+        }
+        parts.push(shell_quote(&self.program));
+        parts.extend(self.args.iter().map(|arg| shell_quote(arg)));
+        parts.join(" ")
+    }
+}
+
+pub fn shell_quote(s: &str) -> String {
+    shlex::try_quote(s)
+        .map(|quoted| quoted.into_owned())
+        .unwrap_or_else(|_| "''".to_string())
+}
+
+#[derive(Clone)]
+pub struct SelectedAgent {
+    pub command: AgentCommand,
+    pub profile: &'static dyn AgentProfile,
+}
+
+impl SelectedAgent {
+    pub fn kind(&self) -> &'static str {
+        self.profile.name()
+    }
+
+    pub fn shell_command(&self) -> String {
+        self.command.shell_string()
+    }
+
+    pub fn from_raw(command: &str) -> Option<Self> {
+        let command = AgentCommand::parse(command)?;
+        let profile = resolve_profile(Some(&command.shell_string()));
+        Some(Self { command, profile })
+    }
+}
+
+pub fn resolve_selected_agent(config: &Config, selector: Option<&str>) -> Option<SelectedAgent> {
+    let selector = selector
+        .or(config.selected_agent.as_deref())
+        .or(config.agent.as_deref())?;
+
+    if let Some(entry) = config.agents.get(selector) {
+        let command = AgentCommand::from_entry(selector, entry);
+        let profile =
+            resolve_profile_with_type(Some(&command.shell_string()), entry.agent_type.as_deref());
+        return Some(SelectedAgent { command, profile });
+    }
+
+    SelectedAgent::from_raw(selector)
 }
 
 /// Extract the executable stem from a command string, looking past
@@ -801,5 +894,30 @@ mod tests {
     fn test_type_override_invalid() {
         let profile = resolve_profile_with_type(Some("/path/to/wrapper"), Some("nonexistent"));
         assert_eq!(profile.name(), "default");
+    }
+
+    #[test]
+    fn test_agent_command_renders_from_env() {
+        let command = AgentCommand {
+            program: "claude".to_string(),
+            args: vec!["--dangerously-skip-permissions".to_string()],
+            env: BTreeMap::from([
+                (
+                    "ANTHROPIC_AUTH_TOKEN".to_string(),
+                    AgentEnvValue::FromEnv {
+                        from_env: "DEEPSEEK_API_KEY".to_string(),
+                    },
+                ),
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    AgentEnvValue::Literal("https://api.deepseek.com/anthropic".to_string()),
+                ),
+            ]),
+        };
+
+        assert_eq!(
+            command.shell_string(),
+            "env ANTHROPIC_AUTH_TOKEN=\"$DEEPSEEK_API_KEY\" ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic claude --dangerously-skip-permissions"
+        );
     }
 }

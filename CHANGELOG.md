@@ -22,6 +22,14 @@ description: Release notes and version history for workmux
 
 # Changelog
 
+## Unreleased
+
+- Add structured [named agent profiles](https://workmux.raine.dev/guide/agents#named-agents)
+  with separate `type`, `command`, `args`, and `env` fields, including support
+  for `env` values sourced from launch environment variables with `from_env`.
+  Named profiles can now be selected with `workmux add -a <name>` or used
+  directly in panes with [`<agent:name>`](https://workmux.raine.dev/guide/configuration#agent-placeholders).
+
 ## v0.1.213 (2026-06-12)
 
 - Add first-party Oh My Pi (`omp`) support for prompt injection, status setup with waiting detection, skills, and sandbox credential mounts. ([#177](https://github.com/raine/workmux/pull/177))

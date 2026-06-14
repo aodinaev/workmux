@@ -2551,21 +2551,60 @@ to `.gitignore`:
 .claude/settings.local.json
 ```
 
-**Skip permission prompts (yolo mode)**
+**Named agent profiles**
 
-To skip prompts entirely, define a
-[named agent](https://workmux.raine.dev/guide/agents#named-agents) that shadows
-`claude`:
+Define [named agents](https://workmux.raine.dev/guide/agents#named-agents) in
+your global config when an agent needs a wrapper command, extra arguments, or
+environment variables. Simple string aliases still work:
 
 ```yaml
 # ~/.config/workmux/config.yaml
 agents:
-  claude: 'claude --dangerously-skip-permissions'
+  cc-work: "claude"
+  cc-personal: "env CLAUDE_CONFIG_DIR=~/.claude-personal claude"
+  cc-bedrock: "env -u CLAUDE_CODE_USE_BEDROCK -u AWS_REGION AWS_PROFILE=prod claude"
+  cc-yolo: "claude --dangerously-skip-permissions"
+  cod: "codex --yolo"
 ```
 
-This makes all workmux-created worktrees use the flag automatically, without
-affecting `claude` outside of workmux. You can also use a separate name and
-reference it per-project with `agent: cc-yolo`.
+Structured profiles make the same kind of config easier to maintain because
+arguments and environment are not written as one long shell string:
+
+```yaml
+# ~/.config/workmux/config.yaml
+agents:
+  cc-personal:
+    type: claude
+    command: claude
+    env:
+      CLAUDE_CONFIG_DIR: ~/.claude-personal
+      ANTHROPIC_AUTH_TOKEN:
+        from_env: ANTHROPIC_AUTH_TOKEN
+  cod-mini:
+    type: codex
+    command: codex
+    args:
+      - exec
+      - -m
+      - gpt-5.1-codex-mini
+```
+
+To skip prompts entirely, define a named agent with the Claude skip-permissions
+flag:
+
+```yaml
+# ~/.config/workmux/config.yaml
+agents:
+  cc-yolo:
+    type: claude
+    command: claude
+    args:
+      - --dangerously-skip-permissions
+```
+
+Reference a named profile per project with `agent: cc-yolo`, pass it with
+`-a cc-yolo`, or use it directly in a pane with `<agent:cc-yolo>`. Structured
+profiles support `command`, `args`, `env`, and `type` fields.
 
 ### Delegating tasks with `/worktree`
 

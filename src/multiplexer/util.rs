@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use super::agent::SelectedAgent;
+use crate::config::Config;
+
 use crate::cmd::Cmd;
 
 use super::PaneHandshake;
@@ -109,101 +112,6 @@ pub fn run_detached_sh_c(script: &str) -> Result<()> {
     Cmd::new("sh").args(&["-c", &bg_script]).run().map(|_| ())
 }
 
-/// Rewrites an agent command to inject a prompt file's contents.
-///
-/// When a prompt file is provided (via --prompt-file or --prompt-editor), this function
-/// modifies the agent command to automatically pass the prompt content. For example,
-/// "claude" becomes "claude -- \"$(cat PROMPT.md)\"" for POSIX shells, or wrapped in
-/// `sh -c '...'` for non-POSIX shells like nushell.
-///
-/// Only rewrites commands that match the configured agent. For instance, if the config
-/// specifies "gemini" as the agent, a "claude" command won't be rewritten.
-///
-/// Agent-specific prompt injection is handled via `AgentProfile::prompt_argument()`.
-///
-/// For non-POSIX shells (nushell, fish, pwsh), the command is wrapped in `sh -c '...'`
-/// to ensure the `$(cat ...)` command substitution works correctly.
-///
-/// The returned command is prefixed with a space to prevent it from being saved to
-/// shell history (most shells ignore commands starting with a space).
-///
-/// Returns None if the command shouldn't be rewritten (empty, doesn't match configured agent, etc.)
-pub fn rewrite_agent_command(
-    command: &str,
-    prompt_file: &Path,
-    working_dir: &Path,
-    effective_agent: Option<&str>,
-    shell: &str,
-    type_override: Option<&str>,
-) -> Option<String> {
-    let agent_command = effective_agent?;
-    let trimmed_command = command.trim();
-    if trimmed_command.is_empty() {
-        return None;
-    }
-
-    let (pane_token, pane_rest) = crate::config::split_first_token(trimmed_command)?;
-    let (config_token, _) = crate::config::split_first_token(agent_command)?;
-
-    let resolved_pane_path = crate::config::resolve_executable_path(pane_token)
-        .unwrap_or_else(|| pane_token.to_string());
-    let resolved_config_path = crate::config::resolve_executable_path(config_token)
-        .unwrap_or_else(|| config_token.to_string());
-
-    let pane_stem = Path::new(&resolved_pane_path).file_stem();
-    let config_stem = Path::new(&resolved_config_path).file_stem();
-
-    let type_stem = type_override.map(|kind| {
-        let token = super::agent::find_executable_token(kind);
-        let resolved =
-            crate::config::resolve_executable_path(token).unwrap_or_else(|| token.to_string());
-        Path::new(&resolved).file_stem().map(|stem| stem.to_owned())
-    });
-
-    if pane_stem != config_stem && type_stem.as_ref().and_then(|stem| stem.as_deref()) != pane_stem
-    {
-        return None;
-    }
-
-    let relative = prompt_file.strip_prefix(working_dir).unwrap_or(prompt_file);
-    let prompt_path = relative.to_string_lossy();
-    let rest = pane_rest.trim_start();
-
-    // Build the inner command step-by-step to ensure correct order:
-    // [executable] [default_subcommand?] [user_args] [prompt_argument]
-    let profile = super::agent::resolve_profile_with_type(effective_agent, type_override);
-    let mut inner_cmd = pane_token.to_string();
-
-    // Insert default subcommand (e.g., "chat" for kiro-cli) if the user
-    // hasn't already included it in their config args.
-    if let Some(subcmd) = profile.default_subcommand()
-        && needs_default_subcommand(rest, subcmd)
-    {
-        inner_cmd.push(' ');
-        inner_cmd.push_str(subcmd);
-    }
-
-    // Add user-provided arguments from config (must come before the prompt)
-    if !rest.is_empty() {
-        inner_cmd.push(' ');
-        inner_cmd.push_str(rest);
-    }
-
-    // Add the prompt argument
-    inner_cmd.push(' ');
-    inner_cmd.push_str(&profile.prompt_argument(&prompt_path));
-
-    // For POSIX shells (bash, zsh, sh, etc.), use the command directly.
-    // For non-POSIX shells (nushell, fish, pwsh), wrap in sh -c '...' to ensure
-    // $(cat ...) command substitution works.
-    // Prefix with space to prevent shell history entry.
-    if is_posix_shell(shell) {
-        Some(format!(" {}", inner_cmd))
-    } else {
-        Some(format!(" {}", wrap_for_non_posix_shell(&inner_cmd)))
-    }
-}
-
 /// Resolve a pane's command: handle `<agent>` placeholder, auto-detect known
 /// agents, and adjust for prompt injection.
 ///
@@ -215,104 +123,95 @@ pub struct ResolvedCommand {
     pub command: String,
     /// Whether the command was rewritten to inject a prompt (needs auto-status).
     pub prompt_injected: bool,
-    /// The effective agent for this pane (may differ from window-level agent for auto-detected agents).
-    pub effective_agent: Option<String>,
+    /// Selected agent metadata for agent panes.
+    pub selected_agent: Option<SelectedAgent>,
 }
 
-pub fn resolve_pane_command(
+pub fn resolve_pane_command_with_config(
     pane_command: Option<&str>,
     run_commands: bool,
     prompt_file_path: Option<&Path>,
     working_dir: &Path,
-    effective_agent: Option<&str>,
+    config: &Config,
+    task_agent: Option<&str>,
     shell: &str,
-    type_override: Option<&str>,
 ) -> Option<ResolvedCommand> {
     let raw_command = pane_command?;
-
-    let (command, pane_effective_agent) = if raw_command == "<agent>" {
-        // Bare <agent> - use window-level effective agent
-        let agent = effective_agent?;
-        (agent, effective_agent)
-    } else if super::agent::is_known_agent(raw_command) {
-        // Known agent command (e.g., "codex --flags") - use itself as effective
-        // agent so prompt injection works even when it's not the configured agent
-        (raw_command, Some(raw_command))
-    } else {
-        // Regular command - use window-level effective agent for prompt injection matching
-        (raw_command, effective_agent)
-    };
-
     if !run_commands {
         return None;
     }
 
-    let result = adjust_command(
-        command,
-        prompt_file_path,
-        working_dir,
-        pane_effective_agent,
-        shell,
-        type_override,
-    );
+    let default_agent = super::agent::resolve_selected_agent(config, task_agent);
+    let mut selected_agent = None;
+    let command = if raw_command == "<agent>" {
+        let agent = default_agent?;
+        let command = agent.shell_command();
+        selected_agent = Some(agent);
+        command
+    } else if let Some(name) = raw_command
+        .strip_prefix("<agent:")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        let agent = super::agent::resolve_selected_agent(config, Some(name))?;
+        let command = agent.shell_command();
+        selected_agent = Some(agent);
+        command
+    } else if super::agent::is_known_agent(raw_command) {
+        selected_agent = super::agent::SelectedAgent::from_raw(raw_command);
+        raw_command.to_string()
+    } else if default_agent.as_ref().is_some_and(|agent| {
+        crate::config::is_agent_command(raw_command, &agent.shell_command())
+            || crate::config::is_agent_command(raw_command, agent.kind())
+    }) {
+        selected_agent = default_agent;
+        raw_command.to_string()
+    } else {
+        raw_command.to_string()
+    };
+
+    let selected_ref = selected_agent.as_ref();
+    let result =
+        adjust_selected_command(&command, prompt_file_path, working_dir, selected_ref, shell);
     let prompt_injected = matches!(result, Cow::Owned(_));
     Some(ResolvedCommand {
         command: result.into_owned(),
         prompt_injected,
-        effective_agent: pane_effective_agent.map(|s| s.to_string()),
+        selected_agent,
     })
 }
 
-/// Adjust a command for execution, potentially rewriting it to inject prompts.
-///
-/// This is a convenience wrapper around `rewrite_agent_command` that returns
-/// the original command as a borrowed reference if no rewriting is needed.
-pub fn adjust_command<'a>(
+fn adjust_selected_command<'a>(
     command: &'a str,
     prompt_file_path: Option<&Path>,
     working_dir: &Path,
-    effective_agent: Option<&str>,
+    selected_agent: Option<&SelectedAgent>,
     shell: &str,
-    type_override: Option<&str>,
 ) -> Cow<'a, str> {
-    if let Some(prompt_path) = prompt_file_path
-        && let Some(rewritten) = rewrite_agent_command(
-            command,
-            prompt_path,
-            working_dir,
-            effective_agent,
-            shell,
-            type_override,
-        )
-    {
-        return Cow::Owned(rewritten);
-    }
-
-    // Even without a prompt, insert the default subcommand if needed
-    // (e.g., "kiro-cli" -> "kiro-cli chat"). Only applies when the
-    // command itself is the agent (stem must match).
-    let profile = super::agent::resolve_profile_with_type(effective_agent, type_override);
-    if let Some(subcmd) = profile.default_subcommand()
-        && let Some((token, rest_with_leading)) = crate::config::split_first_token(command)
-    {
-        let resolved =
-            crate::config::resolve_executable_path(token).unwrap_or_else(|| token.to_string());
-        let stem = Path::new(&resolved)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        if stem == profile.name() {
-            let rest = rest_with_leading.trim_start();
-            if needs_default_subcommand(rest, subcmd) {
-                return if rest.is_empty() {
-                    Cow::Owned(format!("{} {}", token, subcmd))
-                } else {
-                    Cow::Owned(format!("{} {} {}", token, subcmd, rest))
-                };
+    if let Some(agent) = selected_agent {
+        if let Some(prompt_path) = prompt_file_path {
+            let relative = prompt_path.strip_prefix(working_dir).unwrap_or(prompt_path);
+            let prompt_path = relative.to_string_lossy();
+            let mut inner_cmd = command.to_string();
+            if let Some(subcmd) = agent.profile.default_subcommand()
+                && needs_default_subcommand(&agent.command.args.join(" "), subcmd)
+            {
+                let command_text = agent.command.shell_string();
+                inner_cmd = inject_flag_after_agent_executable(&command_text, subcmd);
             }
+            inner_cmd.push(' ');
+            inner_cmd.push_str(&agent.profile.prompt_argument(&prompt_path));
+            return if is_posix_shell(shell) {
+                Cow::Owned(format!(" {}", inner_cmd))
+            } else {
+                Cow::Owned(format!(" {}", wrap_for_non_posix_shell(&inner_cmd)))
+            };
+        }
+        if let Some(subcmd) = agent.profile.default_subcommand()
+            && needs_default_subcommand(&agent.command.args.join(" "), subcmd)
+        {
+            return Cow::Owned(inject_flag_after_agent_executable(command, subcmd));
         }
     }
-
     Cow::Borrowed(command)
 }
 
@@ -464,213 +363,6 @@ mod tests {
     fn test_is_posix_shell_fish() {
         assert!(!is_posix_shell("/usr/bin/fish"));
         assert!(!is_posix_shell("/opt/homebrew/bin/fish"));
-    }
-
-    // --- rewrite_agent_command tests for POSIX shells ---
-
-    #[test]
-    fn test_rewrite_claude_command_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "claude",
-            &prompt_file,
-            &working_dir,
-            Some("claude"),
-            "/bin/zsh",
-            None,
-        );
-        // POSIX shell: no wrapper, prefixed with space to prevent history
-        assert_eq!(result, Some(" claude -- \"$(cat PROMPT.md)\"".to_string()));
-    }
-
-    #[test]
-    fn test_rewrite_gemini_command_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "gemini",
-            &prompt_file,
-            &working_dir,
-            Some("gemini"),
-            "/bin/bash",
-            None,
-        );
-        assert_eq!(result, Some(" gemini -i \"$(cat PROMPT.md)\"".to_string()));
-    }
-
-    #[test]
-    fn test_rewrite_opencode_command_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "opencode",
-            &prompt_file,
-            &working_dir,
-            Some("opencode"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(
-            result,
-            Some(" opencode --prompt \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_kiro_bare_command_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        // agent: kiro-cli (bare, no "chat" subcommand)
-        let result = rewrite_agent_command(
-            "kiro-cli",
-            &prompt_file,
-            &working_dir,
-            Some("kiro-cli"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(
-            result,
-            Some(" kiro-cli chat \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_kiro_with_chat_subcommand() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        // agent: "kiro-cli chat" (user already includes chat)
-        let result = rewrite_agent_command(
-            "kiro-cli chat",
-            &prompt_file,
-            &working_dir,
-            Some("kiro-cli chat"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(
-            result,
-            Some(" kiro-cli chat \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_kiro_with_chat_and_flags() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        // agent: "kiro-cli chat --model sonnet"
-        let result = rewrite_agent_command(
-            "kiro-cli chat --model sonnet",
-            &prompt_file,
-            &working_dir,
-            Some("kiro-cli chat --model sonnet"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(
-            result,
-            Some(" kiro-cli chat --model sonnet \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_command_with_args_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "claude --verbose",
-            &prompt_file,
-            &working_dir,
-            Some("claude"),
-            "/bin/bash",
-            None,
-        );
-        assert_eq!(
-            result,
-            Some(" claude --verbose -- \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_typed_wrapper_command_posix() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "claudeg --dangerously-skip-permissions",
-            &prompt_file,
-            &working_dir,
-            Some("claudeg --dangerously-skip-permissions"),
-            "/bin/bash",
-            Some("claude"),
-        );
-        assert_eq!(
-            result,
-            Some(" claudeg --dangerously-skip-permissions -- \"$(cat PROMPT.md)\"".to_string())
-        );
-    }
-
-    // --- rewrite_agent_command tests for non-POSIX shells ---
-
-    #[test]
-    fn test_rewrite_claude_command_nushell() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "claude",
-            &prompt_file,
-            &working_dir,
-            Some("claude"),
-            "/opt/homebrew/bin/nu",
-            None,
-        );
-        // Non-POSIX shell: wrap in sh -c, prefixed with space
-        assert_eq!(
-            result,
-            Some(" sh -c 'claude -- \"$(cat PROMPT.md)\"'".to_string())
-        );
-    }
-
-    #[test]
-    fn test_rewrite_mismatched_agent() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        // Command is for claude but agent is gemini
-        let result = rewrite_agent_command(
-            "claude",
-            &prompt_file,
-            &working_dir,
-            Some("gemini"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_rewrite_empty_command() {
-        let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-
-        let result = rewrite_agent_command(
-            "",
-            &prompt_file,
-            &working_dir,
-            Some("claude"),
-            "/bin/zsh",
-            None,
-        );
-        assert_eq!(result, None);
     }
 
     // --- escape_for_double_quotes tests ---
@@ -834,288 +526,152 @@ mod tests {
         assert_eq!(result, "env FOO=bar claude --dangerously-skip-permissions");
     }
 
-    // --- resolve_pane_command tests ---
+    // --- structured agent resolver tests ---
 
-    #[test]
-    fn test_resolve_pane_command_none_when_no_command() {
-        let result =
-            resolve_pane_command(None, true, None, Path::new("/tmp"), None, "/bin/zsh", None);
-        assert!(result.is_none());
+    fn config_with_agent(agent: &str) -> Config {
+        Config {
+            agent: Some(agent.to_string()),
+            selected_agent: Some(agent.to_string()),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn test_resolve_pane_command_none_when_run_commands_false() {
-        let result = resolve_pane_command(
-            Some("echo hello"),
-            false,
-            None,
-            Path::new("/tmp"),
-            None,
-            "/bin/zsh",
-            None,
-        );
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_pane_command_returns_command_as_is() {
-        let result = resolve_pane_command(
-            Some("vim"),
-            true,
-            None,
-            Path::new("/tmp"),
-            None,
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "vim");
-        assert!(!resolved.prompt_injected);
-    }
-
-    #[test]
-    fn test_resolve_pane_command_agent_placeholder_with_agent() {
-        let result = resolve_pane_command(
+    fn resolve_structured_pane_command_expands_agent_placeholder() {
+        let config = config_with_agent("claude");
+        let resolved = resolve_pane_command_with_config(
             Some("<agent>"),
             true,
             None,
             Path::new("/tmp"),
-            Some("claude"),
-            "/bin/zsh",
+            &config,
             None,
-        );
-        let resolved = result.unwrap();
+            "/bin/zsh",
+        )
+        .unwrap();
         assert_eq!(resolved.command, "claude");
-        assert!(!resolved.prompt_injected);
+        assert_eq!(resolved.selected_agent.unwrap().kind(), "claude");
     }
 
     #[test]
-    fn test_resolve_pane_command_agent_placeholder_without_agent() {
-        let result = resolve_pane_command(
+    fn resolve_structured_pane_command_uses_named_profile() {
+        let mut config = config_with_agent("cc-sonnet");
+        config.agents.insert(
+            "cc-sonnet".to_string(),
+            crate::config::AgentEntry {
+                command: Some("claude".to_string()),
+                agent_type: Some("claude".to_string()),
+                args: vec!["--model".to_string(), "sonnet".to_string()],
+                env: std::collections::BTreeMap::new(),
+            },
+        );
+        let resolved = resolve_pane_command_with_config(
             Some("<agent>"),
             true,
             None,
             Path::new("/tmp"),
+            &config,
             None,
             "/bin/zsh",
-            None,
-        );
-        assert!(result.is_none());
+        )
+        .unwrap();
+        assert_eq!(resolved.command, "claude --model sonnet");
+        assert_eq!(resolved.selected_agent.unwrap().kind(), "claude");
     }
 
     #[test]
-    fn test_resolve_pane_command_with_prompt_injection() {
+    fn resolve_structured_pane_command_supports_named_placeholder() {
+        let mut config = config_with_agent("claude");
+        config.agents.insert(
+            "codex-mini".to_string(),
+            crate::config::AgentEntry {
+                command: Some("codex".to_string()),
+                agent_type: Some("codex".to_string()),
+                args: vec!["exec".to_string(), "-m".to_string(), "mini".to_string()],
+                env: std::collections::BTreeMap::new(),
+            },
+        );
+        let resolved = resolve_pane_command_with_config(
+            Some("<agent:codex-mini>"),
+            true,
+            None,
+            Path::new("/tmp"),
+            &config,
+            None,
+            "/bin/zsh",
+        )
+        .unwrap();
+        assert_eq!(resolved.command, "codex exec -m mini");
+        assert_eq!(resolved.selected_agent.unwrap().kind(), "codex");
+    }
+
+    #[test]
+    fn resolve_structured_pane_command_applies_env_and_prompt() {
         let prompt = PathBuf::from("/tmp/worktree/PROMPT.md");
         let working_dir = PathBuf::from("/tmp/worktree");
-        let result = resolve_pane_command(
-            Some("claude"),
+        let mut config = config_with_agent("cc-proxy");
+        config.agents.insert(
+            "cc-proxy".to_string(),
+            crate::config::AgentEntry {
+                command: Some("/bin/claude wrapper".to_string()),
+                agent_type: Some("claude".to_string()),
+                args: vec!["--verbose".to_string()],
+                env: std::collections::BTreeMap::from([(
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    crate::config::AgentEnvValue::Literal("http://localhost:18765".to_string()),
+                )]),
+            },
+        );
+        let resolved = resolve_pane_command_with_config(
+            Some("<agent>"),
             true,
             Some(&prompt),
             &working_dir,
-            Some("claude"),
-            "/bin/zsh",
+            &config,
             None,
+            "/bin/zsh",
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.command,
+            " env ANTHROPIC_BASE_URL=http://localhost:18765 /bin/claude wrapper --verbose -- \"$(cat PROMPT.md)\""
         );
-        let resolved = result.unwrap();
         assert!(resolved.prompt_injected);
-        assert!(resolved.command.contains("PROMPT.md"));
     }
 
     #[test]
-    fn test_resolve_pane_command_no_injection_for_mismatched_agent() {
+    fn resolve_structured_pane_command_wraps_non_posix_shell() {
         let prompt = PathBuf::from("/tmp/worktree/PROMPT.md");
         let working_dir = PathBuf::from("/tmp/worktree");
-        let result = resolve_pane_command(
-            Some("vim"),
+        let config = config_with_agent("claude");
+        let resolved = resolve_pane_command_with_config(
+            Some("<agent>"),
             true,
             Some(&prompt),
             &working_dir,
-            Some("claude"),
-            "/bin/zsh",
+            &config,
             None,
-        );
-        let resolved = result.unwrap();
-        assert!(!resolved.prompt_injected);
-        assert_eq!(resolved.command, "vim");
+            "/opt/homebrew/bin/nu",
+        )
+        .unwrap();
+        assert_eq!(resolved.command, " sh -c 'claude -- \"$(cat PROMPT.md)\"'");
     }
 
     #[test]
-    fn test_resolve_pane_command_bare_agent_effective_agent_field() {
-        let result = resolve_pane_command(
-            Some("<agent>"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("claude"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "claude");
-        assert_eq!(resolved.effective_agent.as_deref(), Some("claude"));
-    }
-
-    #[test]
-    fn test_resolve_pane_command_regular_command_effective_agent_field() {
-        let result = resolve_pane_command(
-            Some("vim"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("claude"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "vim");
-        // Regular commands still carry the window-level agent
-        assert_eq!(resolved.effective_agent.as_deref(), Some("claude"));
-    }
-
-    // --- auto-detection of known agent commands ---
-
-    #[test]
-    fn test_resolve_pane_command_known_agent_auto_detected() {
-        // "codex --flags" is a known agent, should auto-detect even when
-        // the window-level agent is different
-        let result = resolve_pane_command(
-            Some("codex --yolo"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("claude"), // window-level agent is claude
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "codex --yolo");
-        // effective_agent should be the command itself, not the window-level agent
-        assert_eq!(resolved.effective_agent.as_deref(), Some("codex --yolo"));
-    }
-
-    #[test]
-    fn test_resolve_pane_command_known_agent_prompt_injection() {
-        let prompt = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-        let result = resolve_pane_command(
-            Some("codex"),
-            true,
-            Some(&prompt),
-            &working_dir,
-            Some("claude"), // window-level is claude, pane is codex
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert!(resolved.prompt_injected);
-        assert!(resolved.command.contains("PROMPT.md"));
-        assert_eq!(resolved.effective_agent.as_deref(), Some("codex"));
-    }
-
-    #[test]
-    fn test_resolve_pane_command_known_agent_no_window_agent() {
-        // Known agent should work even without any window-level agent
-        let prompt = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-        let result = resolve_pane_command(
-            Some("gemini"),
-            true,
-            Some(&prompt),
-            &working_dir,
-            None, // no window-level agent at all
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert!(resolved.prompt_injected);
-        // Should use gemini's profile (-i flag)
-        assert!(resolved.command.contains("-i"));
-        assert_eq!(resolved.effective_agent.as_deref(), Some("gemini"));
-    }
-
-    // --- kiro-cli default subcommand tests ---
-
-    #[test]
-    fn test_resolve_pane_command_kiro_bare_inserts_chat() {
-        // agent: kiro-cli, no prompt -> should become "kiro-cli chat"
-        let result = resolve_pane_command(
-            Some("<agent>"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("kiro-cli"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "kiro-cli chat");
-    }
-
-    #[test]
-    fn test_resolve_pane_command_kiro_with_chat_no_duplicate() {
-        // agent: "kiro-cli chat", no prompt -> stays "kiro-cli chat"
-        let result = resolve_pane_command(
-            Some("<agent>"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("kiro-cli chat"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "kiro-cli chat");
-    }
-
-    #[test]
-    fn test_resolve_pane_command_kiro_no_chat_on_vim() {
-        // agent: kiro-cli but pane command is vim -> no chat inserted
-        let result = resolve_pane_command(
+    fn resolve_structured_pane_command_preserves_regular_command() {
+        let config = config_with_agent("claude");
+        let resolved = resolve_pane_command_with_config(
             Some("vim"),
             true,
             None,
             Path::new("/tmp"),
-            Some("kiro-cli"),
-            "/bin/zsh",
+            &config,
             None,
-        );
-        let resolved = result.unwrap();
+            "/bin/zsh",
+        )
+        .unwrap();
         assert_eq!(resolved.command, "vim");
-    }
-
-    #[test]
-    fn test_resolve_pane_command_kiro_with_prompt() {
-        // agent: kiro-cli, with prompt -> "kiro-cli chat "$(cat PROMPT.md)""
-        let prompt = PathBuf::from("/tmp/worktree/PROMPT.md");
-        let working_dir = PathBuf::from("/tmp/worktree");
-        let result = resolve_pane_command(
-            Some("<agent>"),
-            true,
-            Some(&prompt),
-            &working_dir,
-            Some("kiro-cli"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert!(resolved.prompt_injected);
-        assert_eq!(resolved.command, " kiro-cli chat \"$(cat PROMPT.md)\"");
-    }
-
-    #[test]
-    fn test_resolve_pane_command_kiro_with_flags_inserts_chat() {
-        // agent: "kiro-cli --verbose" -> should become "kiro-cli chat --verbose"
-        let result = resolve_pane_command(
-            Some("<agent>"),
-            true,
-            None,
-            Path::new("/tmp"),
-            Some("kiro-cli --verbose"),
-            "/bin/zsh",
-            None,
-        );
-        let resolved = result.unwrap();
-        assert_eq!(resolved.command, "kiro-cli chat --verbose");
+        assert!(resolved.selected_agent.is_none());
     }
 
     // --- needs_default_subcommand tests ---

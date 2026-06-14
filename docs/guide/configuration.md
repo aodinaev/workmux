@@ -176,6 +176,9 @@ Each pane supports:
 #### Agent placeholders
 
 - `<agent>`: resolves to the configured agent (from `agent` config or `--agent` flag)
+- `<agent:name>`: resolves to a named agent profile from global config
+
+Named agent profiles can provide structured `command`, `args`, `env`, and `type` fields, including `env` values loaded with `from_env`. See [named agents](/guide/agents#named-agents) for the full profile schema.
 
 Built-in agents (`claude`, `gemini`, `codex`, `opencode`, `kiro-cli`, `vibe`, `pi`, `omp`) are auto-detected when used as literal commands and receive prompt injection automatically, without needing the `<agent>` placeholder or a matching `agent` config:
 

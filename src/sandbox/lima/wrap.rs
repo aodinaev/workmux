@@ -30,14 +30,13 @@ pub fn wrap_for_lima(
     _vm_name: &str,
     working_dir: &Path,
 ) -> Result<String> {
-    // Strip the single leading space that rewrite_agent_command adds for
-    // shell history prevention -- it's not needed here since the sandbox
-    // supervisor is not an interactive shell.
+    // Strip the leading history-prevention space before passing the command to
+    // the sandbox supervisor.
     let command = command.strip_prefix(' ').unwrap_or(command);
     // Pass the command as a single quoted argument. The sandbox supervisor
     // (sandbox_run.rs) handles wrapping it in `sh -lc '...'` for limactl,
     // which is necessary because limactl/SSH flattens separate args.
-    // Prefix with space to prevent shell history entry (same as rewrite_agent_command)
+    // Prefix with space to prevent shell history entry.
     Ok(format!(
         " workmux sandbox run '{}' -- '{}'",
         shell_escape(&working_dir.to_string_lossy()),
@@ -91,7 +90,7 @@ mod tests {
     #[test]
     fn test_wrap_strips_leading_space() {
         let config = Config::default();
-        // rewrite_agent_command adds a leading space for history prevention
+        // Agent commands can start with a history-prevention space.
         let result = wrap_for_lima(
             " claude -- \"$(cat PROMPT.md)\"",
             &config,
