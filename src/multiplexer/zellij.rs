@@ -188,6 +188,40 @@ impl ZellijBackend {
             .find(|t| t.name == name)
             .map(|t| t.tab_id()))
     }
+
+    fn find_tab_by_name(full_name: &str) -> Result<TabInfo> {
+        Self::list_tabs()?
+            .into_iter()
+            .find(|t| t.name == full_name)
+            .ok_or_else(|| anyhow!("Window '{}' not found", full_name))
+    }
+
+    fn build_live_pane_info(pane: &PaneInfo) -> LivePaneInfo {
+        let current_command = extract_base_command(
+            pane.pane_command.as_deref(),
+            pane.terminal_command.as_deref(),
+        );
+        let current_command = if current_command.is_empty() {
+            None
+        } else {
+            Some(current_command)
+        };
+
+        let working_dir = pane
+            .pane_cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        LivePaneInfo {
+            pid: None,
+            current_command,
+            working_dir,
+            title: Some(pane.title.clone()).filter(|t| !t.is_empty()),
+            session: Self::session_name(),
+            window: Some(pane.tab_name.clone()).filter(|t| !t.is_empty()),
+        }
+    }
 }
 
 impl Multiplexer for ZellijBackend {
@@ -272,11 +306,7 @@ impl Multiplexer for ZellijBackend {
     }
 
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
-        let tabs = Self::list_tabs()?;
-        let tab = tabs
-            .iter()
-            .find(|t| t.name == full_name)
-            .ok_or_else(|| anyhow!("Window '{}' not found", full_name))?;
+        let tab = Self::find_tab_by_name(full_name)?;
         Ok(format!(
             "zellij action go-to-tab-by-id {} >/dev/null 2>&1",
             tab.tab_id()
@@ -284,11 +314,7 @@ impl Multiplexer for ZellijBackend {
     }
 
     fn shell_kill_window_cmd(&self, full_name: &str) -> Result<String> {
-        let tabs = Self::list_tabs()?;
-        let tab = tabs
-            .iter()
-            .find(|t| t.name == full_name)
-            .ok_or_else(|| anyhow!("Window '{}' not found", full_name))?;
+        let tab = Self::find_tab_by_name(full_name)?;
         Ok(format!(
             "zellij action close-tab-by-id {} >/dev/null 2>&1",
             tab.tab_id()
@@ -842,31 +868,7 @@ impl Multiplexer for ZellijBackend {
             None => return Ok(None), // Pane doesn't exist
         };
 
-        let current_command = extract_base_command(
-            pane.pane_command.as_deref(),
-            pane.terminal_command.as_deref(),
-        );
-        let current_command = if current_command.is_empty() {
-            None
-        } else {
-            Some(current_command)
-        };
-
-        // Use actual pane_cwd instead of process cwd
-        let working_dir = pane
-            .pane_cwd
-            .as_deref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-        Ok(Some(LivePaneInfo {
-            pid: None, // Zellij doesn't expose PID
-            current_command,
-            working_dir,
-            title: Some(pane.title.clone()).filter(|t| !t.is_empty()),
-            session: Self::session_name(),
-            window: Some(pane.tab_name.clone()).filter(|t| !t.is_empty()),
-        }))
+        Ok(Some(Self::build_live_pane_info(pane)))
     }
 
     fn validate_agent_alive(&self, state: &crate::state::AgentState) -> Result<bool> {
@@ -918,35 +920,7 @@ impl Multiplexer for ZellijBackend {
             }
 
             let pane_id = format!("terminal_{}", pane.id);
-
-            let current_command = extract_base_command(
-                pane.pane_command.as_deref(),
-                pane.terminal_command.as_deref(),
-            );
-            let current_command = if current_command.is_empty() {
-                None
-            } else {
-                Some(current_command)
-            };
-
-            // Use actual pane_cwd instead of process cwd
-            let working_dir = pane
-                .pane_cwd
-                .as_deref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-            result.insert(
-                pane_id,
-                LivePaneInfo {
-                    pid: None, // Zellij doesn't expose PID
-                    current_command,
-                    working_dir,
-                    title: Some(pane.title.clone()).filter(|t| !t.is_empty()),
-                    session: Self::session_name(),
-                    window: Some(pane.tab_name.clone()).filter(|t| !t.is_empty()),
-                },
-            );
+            result.insert(pane_id, Self::build_live_pane_info(&pane));
         }
 
         Ok(result)
