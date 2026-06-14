@@ -13,14 +13,119 @@ pub fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+use crate::config::StatusIcons;
 use crate::git::GitStatus;
 use crate::github::PrSummary;
+use crate::multiplexer::AgentStatus;
 use crate::nerdfont;
 use crate::nerdfont::GitIcons;
 use crate::ui::pr_status::{PrStatusOptions, format_pr_details as shared_format_pr_details};
+use crate::workflow::types::AgentStatusSummary;
 
+use super::super::ansi;
 use super::super::spinner::SPINNER_FRAMES;
 use super::theme::ThemePalette;
+
+/// Spacing mode for agent status icon rendering.
+pub enum AgentStatusFormat {
+    /// Table cell: trailing space after each icon, spinner padded with spaces.
+    TableCell,
+    /// Detail line: single space separators between present statuses only.
+    DetailLine,
+}
+
+struct AgentStatusCounts {
+    working: usize,
+    waiting: usize,
+    done: usize,
+}
+
+fn count_agent_statuses(summary: &AgentStatusSummary) -> AgentStatusCounts {
+    AgentStatusCounts {
+        working: summary
+            .statuses
+            .iter()
+            .filter(|s| **s == AgentStatus::Working)
+            .count(),
+        waiting: summary
+            .statuses
+            .iter()
+            .filter(|s| **s == AgentStatus::Waiting)
+            .count(),
+        done: summary
+            .statuses
+            .iter()
+            .filter(|s| **s == AgentStatus::Done)
+            .count(),
+    }
+}
+
+/// Format agent status icons for dashboard table cells and detail lines.
+pub fn format_agent_status_summary(
+    summary: Option<&AgentStatusSummary>,
+    icons: &StatusIcons,
+    spinner_frame: u8,
+    palette: &ThemePalette,
+    mode: AgentStatusFormat,
+) -> Vec<(String, Style)> {
+    let Some(summary) = summary else {
+        return if matches!(mode, AgentStatusFormat::TableCell) {
+            vec![("-".to_string(), Style::default().fg(palette.dimmed))]
+        } else {
+            Vec::new()
+        };
+    };
+
+    let counts = count_agent_statuses(summary);
+    let spinner = SPINNER_FRAMES[spinner_frame as usize % SPINNER_FRAMES.len()];
+    let separator_style = Style::default().fg(palette.text);
+    let mut parts: Vec<(String, Style)> = Vec::new();
+    let mut has_prior = false;
+
+    if counts.working > 0 {
+        let icon = icons.working();
+        let base_style = Style::default().fg(palette.info);
+        parts.extend(ansi::parse_tmux_styles(icon, base_style));
+        match mode {
+            AgentStatusFormat::TableCell => {
+                parts.push((format!(" {} ", spinner), base_style));
+            }
+            AgentStatusFormat::DetailLine => {
+                parts.push((format!(" {}", spinner), base_style));
+            }
+        }
+        has_prior = true;
+    }
+    if counts.waiting > 0 {
+        if matches!(mode, AgentStatusFormat::DetailLine) && has_prior {
+            parts.push((" ".to_string(), separator_style));
+        }
+        let icon = icons.waiting();
+        let base_style = Style::default().fg(palette.accent);
+        parts.extend(ansi::parse_tmux_styles(icon, base_style));
+        if matches!(mode, AgentStatusFormat::TableCell) {
+            parts.push((" ".to_string(), base_style));
+        }
+        has_prior = true;
+    }
+    if counts.done > 0 {
+        if matches!(mode, AgentStatusFormat::DetailLine) && has_prior {
+            parts.push((" ".to_string(), separator_style));
+        }
+        let icon = icons.done();
+        let base_style = Style::default().fg(palette.success);
+        parts.extend(ansi::parse_tmux_styles(icon, base_style));
+        if matches!(mode, AgentStatusFormat::TableCell) {
+            parts.push((" ".to_string(), base_style));
+        }
+    }
+
+    if parts.is_empty() && matches!(mode, AgentStatusFormat::TableCell) {
+        parts.push(("-".to_string(), Style::default().fg(palette.dimmed)));
+    }
+
+    parts
+}
 
 /// Add diff icon and uncommitted (+N/-N) spans. Caller is responsible for
 /// the leading separator if needed.

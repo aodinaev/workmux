@@ -9,11 +9,11 @@ use ratatui::{
 };
 
 use super::super::agent;
-use super::super::ansi;
 use super::super::app::App;
-use super::super::spinner::SPINNER_FRAMES;
 use super::format;
-use super::format::{format_git_status, format_pr_status, truncate};
+use super::format::{
+    AgentStatusFormat, format_agent_status_summary, format_git_status, format_pr_status, truncate,
+};
 
 /// Render the worktree table in the given area.
 pub fn render_worktree_table(f: &mut Frame, app: &mut App, area: Rect) {
@@ -83,51 +83,13 @@ pub fn render_worktree_table(f: &mut Frame, app: &mut App, area: Rect) {
             };
 
             // Agent status summary
-            let agent_spans = if let Some(ref summary) = wt.agent_status {
-                use crate::multiplexer::AgentStatus;
-                let mut parts: Vec<(String, Style)> = Vec::new();
-                let working = summary
-                    .statuses
-                    .iter()
-                    .filter(|s| **s == AgentStatus::Working)
-                    .count();
-                let waiting = summary
-                    .statuses
-                    .iter()
-                    .filter(|s| **s == AgentStatus::Waiting)
-                    .count();
-                let done = summary
-                    .statuses
-                    .iter()
-                    .filter(|s| **s == AgentStatus::Done)
-                    .count();
-
-                if working > 0 {
-                    let icon = app.config.status_icons.working();
-                    let spinner = SPINNER_FRAMES[app.spinner_frame as usize % SPINNER_FRAMES.len()];
-                    let base_style = Style::default().fg(app.palette.info);
-                    parts.extend(ansi::parse_tmux_styles(icon, base_style));
-                    parts.push((format!(" {} ", spinner), base_style));
-                }
-                if waiting > 0 {
-                    let icon = app.config.status_icons.waiting();
-                    let base_style = Style::default().fg(app.palette.accent);
-                    parts.extend(ansi::parse_tmux_styles(icon, base_style));
-                    parts.push((" ".to_string(), base_style));
-                }
-                if done > 0 {
-                    let icon = app.config.status_icons.done();
-                    let base_style = Style::default().fg(app.palette.success);
-                    parts.extend(ansi::parse_tmux_styles(icon, base_style));
-                    parts.push((" ".to_string(), base_style));
-                }
-                if parts.is_empty() {
-                    parts.push(("-".to_string(), Style::default().fg(app.palette.dimmed)));
-                }
-                parts
-            } else {
-                vec![("-".to_string(), Style::default().fg(app.palette.dimmed))]
-            };
+            let agent_spans = format_agent_status_summary(
+                wt.agent_status.as_ref(),
+                &app.config.status_icons,
+                app.spinner_frame,
+                &app.palette,
+                AgentStatusFormat::TableCell,
+            );
 
             let is_current = app.current_worktree.as_ref().is_some_and(|cwd| {
                 if let (Ok(cwd_canonical), Ok(wt_canonical)) =
@@ -488,53 +450,16 @@ fn render_info_panel(
     }
 
     // Agent status
-    if let Some(ref summary) = wt.agent_status {
-        use crate::multiplexer::AgentStatus;
-        let working = summary
-            .statuses
-            .iter()
-            .filter(|s| **s == AgentStatus::Working)
-            .count();
-        let waiting = summary
-            .statuses
-            .iter()
-            .filter(|s| **s == AgentStatus::Waiting)
-            .count();
-        let done = summary
-            .statuses
-            .iter()
-            .filter(|s| **s == AgentStatus::Done)
-            .count();
-
+    if wt.agent_status.is_some() {
         let mut agent_spans = vec![Span::styled("Agent   ", label_style)];
-        if working > 0 {
-            let icon = app.config.status_icons.working();
-            let spinner = SPINNER_FRAMES[app.spinner_frame as usize % SPINNER_FRAMES.len()];
-            let base_style = Style::default().fg(app.palette.info);
-            for (text, style) in ansi::parse_tmux_styles(icon, base_style) {
-                agent_spans.push(Span::styled(text, style));
-            }
-            agent_spans.push(Span::styled(format!(" {}", spinner), base_style));
-        }
-        if waiting > 0 {
-            if working > 0 {
-                agent_spans.push(Span::styled(" ", text_style));
-            }
-            let icon = app.config.status_icons.waiting();
-            let base_style = Style::default().fg(app.palette.accent);
-            for (text, style) in ansi::parse_tmux_styles(icon, base_style) {
-                agent_spans.push(Span::styled(text, style));
-            }
-        }
-        if done > 0 {
-            if working > 0 || waiting > 0 {
-                agent_spans.push(Span::styled(" ", text_style));
-            }
-            let icon = app.config.status_icons.done();
-            let base_style = Style::default().fg(app.palette.success);
-            for (text, style) in ansi::parse_tmux_styles(icon, base_style) {
-                agent_spans.push(Span::styled(text, style));
-            }
+        for (text, style) in format_agent_status_summary(
+            wt.agent_status.as_ref(),
+            &app.config.status_icons,
+            app.spinner_frame,
+            &app.palette,
+            AgentStatusFormat::DetailLine,
+        ) {
+            agent_spans.push(Span::styled(text, style));
         }
         lines.push(Line::from(agent_spans));
     }
