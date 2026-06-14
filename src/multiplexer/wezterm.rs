@@ -12,9 +12,9 @@ use std::time::Duration;
 use crate::cmd::Cmd;
 use crate::config::SplitDirection;
 
+use super::Multiplexer;
 use super::types::*;
 use super::util;
-use super::{Multiplexer, PaneHandshake};
 
 /// WezTerm pane information from `wezterm cli list --format json`
 #[derive(Debug, Deserialize)]
@@ -637,16 +637,6 @@ impl Multiplexer for WezTermBackend {
             .run()?;
 
         Ok(())
-    }
-
-    // === Shell ===
-
-    fn get_default_shell(&self) -> Result<String> {
-        util::default_shell("/bin/bash")
-    }
-
-    fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        util::unix_pipe_handshake()
     }
 
     // === Status ===

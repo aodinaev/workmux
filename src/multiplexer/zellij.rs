@@ -15,7 +15,7 @@ use crate::cmd::Cmd;
 use crate::config::SplitDirection;
 
 use super::types::{CreateWindowParams, LivePaneInfo};
-use super::{Multiplexer, PaneHandshake, util};
+use super::{Multiplexer, util};
 
 /// Zellij multiplexer backend.
 pub struct ZellijBackend {
@@ -769,12 +769,8 @@ impl Multiplexer for ZellijBackend {
 
     // === Shell ===
 
-    fn get_default_shell(&self) -> Result<String> {
-        util::default_shell("/bin/sh")
-    }
-
-    fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        util::unix_pipe_handshake()
+    fn default_shell_fallback(&self) -> &'static str {
+        "/bin/sh"
     }
 
     // === Status ===

@@ -380,11 +380,20 @@ pub trait Multiplexer: Send + Sync {
 
     // === Shell ===
 
+    /// Fallback shell when `$SHELL` is unset.
+    fn default_shell_fallback(&self) -> &'static str {
+        "/bin/bash"
+    }
+
     /// Get the default shell for new panes
-    fn get_default_shell(&self) -> Result<String>;
+    fn get_default_shell(&self) -> Result<String> {
+        util::default_shell(self.default_shell_fallback())
+    }
 
     /// Create a handshake mechanism for synchronizing shell startup
-    fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>>;
+    fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
+        util::unix_pipe_handshake()
+    }
 
     // === Status ===
 

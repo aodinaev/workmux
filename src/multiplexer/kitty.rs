@@ -16,9 +16,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::Multiplexer;
 use super::types::*;
 use super::util;
-use super::{Multiplexer, PaneHandshake};
 
 /// Kitty process info from `foreground_processes` in ls output
 #[derive(Debug, Deserialize)]
@@ -601,16 +601,6 @@ impl Multiplexer for KittyBackend {
             .context("Failed to paste content to pane")?;
 
         Ok(())
-    }
-
-    // === Shell ===
-
-    fn get_default_shell(&self) -> Result<String> {
-        util::default_shell("/bin/bash")
-    }
-
-    fn create_handshake(&self) -> Result<Box<dyn PaneHandshake>> {
-        util::unix_pipe_handshake()
     }
 
     // === Status ===
