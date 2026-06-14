@@ -23,6 +23,31 @@ use super::{Multiplexer, PaneHandshake, util};
 #[derive(Debug, Default)]
 pub struct TmuxBackend;
 
+const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{session_name}\t#{window_name}";
+
+fn parse_live_pane_line(line: &str) -> Option<(String, LivePaneInfo)> {
+    let parts: Vec<&str> = line.split('\t').collect();
+    if parts.len() < 7 {
+        return None;
+    }
+
+    Some((
+        parts[0].to_string(),
+        LivePaneInfo {
+            pid: parts[1].parse().ok(),
+            current_command: Some(parts[2].to_string()),
+            working_dir: PathBuf::from(parts[3]),
+            title: if parts[4].is_empty() {
+                None
+            } else {
+                Some(parts[4].to_string())
+            },
+            session: Some(parts[5].to_string()),
+            window: Some(parts[6].to_string()),
+        },
+    ))
+}
+
 impl TmuxBackend {
     /// Create a new TmuxBackend instance.
     pub fn new() -> Self {
@@ -166,6 +191,18 @@ impl TmuxBackend {
             .context("Failed to split pane")?;
 
         Ok(new_pane_id.trim().to_string())
+    }
+
+    fn shell_window_command(&self, command: &str, full_name: &str) -> Result<String> {
+        let session = self.current_session().unwrap_or_default();
+        let session_prefix = if session.is_empty() {
+            String::new()
+        } else {
+            format!("{}:", session)
+        };
+        let target = format!("{}={}", session_prefix, full_name);
+        let escaped = Self::shell_escape(&target);
+        Ok(format!("tmux {command} -t {escaped} >/dev/null 2>&1"))
     }
 }
 
@@ -445,27 +482,11 @@ impl Multiplexer for TmuxBackend {
     }
 
     fn shell_select_window_cmd(&self, full_name: &str) -> Result<String> {
-        let session = self.current_session().unwrap_or_default();
-        let session_prefix = if session.is_empty() {
-            String::new()
-        } else {
-            format!("{}:", session)
-        };
-        let target = format!("{}={}", session_prefix, full_name);
-        let escaped = Self::shell_escape(&target);
-        Ok(format!("tmux select-window -t {} >/dev/null 2>&1", escaped))
+        self.shell_window_command("select-window", full_name)
     }
 
     fn shell_kill_window_cmd(&self, full_name: &str) -> Result<String> {
-        let session = self.current_session().unwrap_or_default();
-        let session_prefix = if session.is_empty() {
-            String::new()
-        } else {
-            format!("{}:", session)
-        };
-        let target = format!("{}={}", session_prefix, full_name);
-        let escaped = Self::shell_escape(&target);
-        Ok(format!("tmux kill-window -t {} >/dev/null 2>&1", escaped))
+        self.shell_window_command("kill-window", full_name)
     }
 
     fn shell_kill_window_target_cmd(&self, target: &WindowTarget) -> Result<String> {
@@ -764,38 +785,15 @@ impl Multiplexer for TmuxBackend {
     }
 
     fn get_live_pane_info(&self, pane_id: &str) -> Result<Option<LivePaneInfo>> {
-        let format = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{session_name}\t#{window_name}";
-
         // Use display-message to query a specific pane
-        let output = self.tmux_query(&["display-message", "-t", pane_id, "-p", format]);
+        let output = self.tmux_query(&["display-message", "-t", pane_id, "-p", LIVE_PANE_FORMAT]);
 
         let output = match output {
             Ok(o) => o,
             Err(_) => return Ok(None), // Pane doesn't exist or error querying
         };
 
-        let line = output.trim();
-        if line.is_empty() {
-            return Ok(None);
-        }
-
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 7 {
-            return Ok(None);
-        }
-
-        Ok(Some(LivePaneInfo {
-            pid: parts[1].parse().ok(),
-            current_command: Some(parts[2].to_string()),
-            working_dir: PathBuf::from(parts[3]),
-            title: if parts[4].is_empty() {
-                None
-            } else {
-                Some(parts[4].to_string())
-            },
-            session: Some(parts[5].to_string()),
-            window: Some(parts[6].to_string()),
-        }))
+        Ok(parse_live_pane_line(output.trim()).map(|(_, info)| info))
     }
 
     fn server_boot_id(&self) -> Result<Option<String>> {
@@ -814,40 +812,10 @@ impl Multiplexer for TmuxBackend {
     }
 
     fn get_all_live_pane_info(&self) -> Result<std::collections::HashMap<String, LivePaneInfo>> {
-        use std::collections::HashMap;
-
-        let format = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{session_name}\t#{window_name}";
-
         // Use list-panes -a to query ALL panes across all sessions at once
-        let output = self.tmux_query(&["list-panes", "-a", "-F", format])?;
+        let output = self.tmux_query(&["list-panes", "-a", "-F", LIVE_PANE_FORMAT])?;
 
-        let mut panes = HashMap::new();
-
-        for line in output.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 7 {
-                continue;
-            }
-
-            let pane_id = parts[0].to_string();
-            panes.insert(
-                pane_id,
-                LivePaneInfo {
-                    pid: parts[1].parse().ok(),
-                    current_command: Some(parts[2].to_string()),
-                    working_dir: PathBuf::from(parts[3]),
-                    title: if parts[4].is_empty() {
-                        None
-                    } else {
-                        Some(parts[4].to_string())
-                    },
-                    session: Some(parts[5].to_string()),
-                    window: Some(parts[6].to_string()),
-                },
-            );
-        }
-
-        Ok(panes)
+        Ok(output.lines().filter_map(parse_live_pane_line).collect())
     }
 }
 /// Format string to inject into tmux window-status-format.
