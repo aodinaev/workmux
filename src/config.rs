@@ -3021,6 +3021,39 @@ mod tests {
         sandbox_cfg(|sandbox| edit(&mut sandbox.container))
     }
 
+    fn sandbox_extra_mounts(paths: &[&str]) -> Config {
+        sandbox_cfg(|sandbox| {
+            sandbox.extra_mounts = Some(
+                paths
+                    .iter()
+                    .map(|path| ExtraMount::Path((*path).to_string()))
+                    .collect(),
+            );
+        })
+    }
+
+    fn sandbox_agent_config_dir(dir: &str) -> Config {
+        sandbox_cfg(|sandbox| sandbox.agent_config_dir = Some(dir.to_string()))
+    }
+
+    fn sandbox_network(policy: NetworkPolicy, domains: &[&str]) -> Config {
+        sandbox_cfg(|sandbox| {
+            sandbox.network = NetworkConfig {
+                policy: Some(policy),
+                allowed_domains: if domains.is_empty() {
+                    None
+                } else {
+                    Some(
+                        domains
+                            .iter()
+                            .map(|domain| AllowedDomainEntry::Plain((*domain).to_string()))
+                            .collect(),
+                    )
+                },
+            };
+        })
+    }
+
     fn theme_cfg(edit: impl FnOnce(&mut super::ThemeConfig)) -> Config {
         cfg(|config| edit(&mut config.theme))
     }
@@ -3959,20 +3992,8 @@ extra_mounts:
     #[test]
     fn test_extra_mounts_global_only() {
         // Project config is ignored -- only global matters
-        let global = Config {
-            sandbox: SandboxConfig {
-                extra_mounts: Some(vec![ExtraMount::Path("/global/path".to_string())]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let project = Config {
-            sandbox: SandboxConfig {
-                extra_mounts: Some(vec![ExtraMount::Path("/project/path".to_string())]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let global = sandbox_extra_mounts(&["/global/path"]);
+        let project = sandbox_extra_mounts(&["/project/path"]);
 
         let merged = global.merge(project);
         assert_eq!(merged.sandbox.extra_mounts().len(), 1);
@@ -3983,13 +4004,7 @@ extra_mounts:
     #[test]
     fn test_extra_mounts_project_ignored_when_no_global() {
         let global = Config::default(); // no extra_mounts
-        let project = Config {
-            sandbox: SandboxConfig {
-                extra_mounts: Some(vec![ExtraMount::Path("/project/path".to_string())]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let project = sandbox_extra_mounts(&["/project/path"]);
 
         let merged = global.merge(project);
         assert!(merged.sandbox.extra_mounts().is_empty());
@@ -3997,13 +4012,7 @@ extra_mounts:
 
     #[test]
     fn test_extra_mounts_uses_global() {
-        let global = Config {
-            sandbox: SandboxConfig {
-                extra_mounts: Some(vec![ExtraMount::Path("/global/path".to_string())]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let global = sandbox_extra_mounts(&["/global/path"]);
         let project = Config::default();
 
         let merged = global.merge(project);
@@ -4075,20 +4084,8 @@ extra_mounts:
 
     #[test]
     fn test_agent_config_dir_global_only() {
-        let global = Config {
-            sandbox: SandboxConfig {
-                agent_config_dir: Some("~/global/{agent}".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let project = Config {
-            sandbox: SandboxConfig {
-                agent_config_dir: Some("~/project/{agent}".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let global = sandbox_agent_config_dir("~/global/{agent}");
+        let project = sandbox_agent_config_dir("~/project/{agent}");
         let merged = global.merge(project);
         assert_eq!(
             merged.sandbox.agent_config_dir,
@@ -4099,13 +4096,7 @@ extra_mounts:
     #[test]
     fn test_agent_config_dir_project_ignored_when_no_global() {
         let global = Config::default();
-        let project = Config {
-            sandbox: SandboxConfig {
-                agent_config_dir: Some("~/project/{agent}".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let project = sandbox_agent_config_dir("~/project/{agent}");
         let merged = global.merge(project);
         assert!(merged.sandbox.agent_config_dir.is_none());
     }
@@ -4221,28 +4212,8 @@ container:
 
     #[test]
     fn network_config_global_only() {
-        let global = Config {
-            sandbox: SandboxConfig {
-                network: NetworkConfig {
-                    policy: Some(NetworkPolicy::Deny),
-                    allowed_domains: Some(vec![AllowedDomainEntry::Plain(
-                        "api.anthropic.com".to_string(),
-                    )]),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let project = Config {
-            sandbox: SandboxConfig {
-                network: NetworkConfig {
-                    policy: Some(NetworkPolicy::Allow),
-                    allowed_domains: Some(vec![AllowedDomainEntry::Plain("evil.com".to_string())]),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let global = sandbox_network(NetworkPolicy::Deny, &["api.anthropic.com"]);
+        let project = sandbox_network(NetworkPolicy::Allow, &["evil.com"]);
 
         let merged = global.merge(project);
         // Global value should win
@@ -4256,16 +4227,7 @@ container:
     #[test]
     fn network_config_project_ignored_when_no_global() {
         let global = Config::default();
-        let project = Config {
-            sandbox: SandboxConfig {
-                network: NetworkConfig {
-                    policy: Some(NetworkPolicy::Deny),
-                    allowed_domains: Some(vec![AllowedDomainEntry::Plain("evil.com".to_string())]),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let project = sandbox_network(NetworkPolicy::Deny, &["evil.com"]);
 
         let merged = global.merge(project);
         assert_eq!(merged.sandbox.network.policy(), NetworkPolicy::Allow);
@@ -4274,18 +4236,7 @@ container:
 
     #[test]
     fn network_config_uses_global() {
-        let global = Config {
-            sandbox: SandboxConfig {
-                network: NetworkConfig {
-                    policy: Some(NetworkPolicy::Deny),
-                    allowed_domains: Some(vec![AllowedDomainEntry::Plain(
-                        "github.com".to_string(),
-                    )]),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let global = sandbox_network(NetworkPolicy::Deny, &["github.com"]);
         let project = Config::default();
 
         let merged = global.merge(project);
