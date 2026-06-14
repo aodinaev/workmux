@@ -1725,14 +1725,15 @@ Then press `prefix + Ctrl-s` to open the dashboard as a tmux popup.
 
 ### `workmux sidebar`
 
-Toggles a live agent status sidebar on the left side of all tmux windows. Shows
-all active agents across all sessions and projects with live status updates,
-providing an always-visible overview without taking over the full screen like
-the dashboard.
+Toggles a live agent status sidebar on the left or top edge of all tmux
+windows. Shows all active agents across all sessions and projects with live
+status updates, providing an always-visible overview without taking over the
+full screen like the dashboard.
 
 ```bash
-workmux sidebar            # Toggle sidebar on/off (all sessions)
-workmux sidebar --session  # Toggle current session only, or opt out of global mode
+workmux sidebar                 # Toggle sidebar on/off (all sessions)
+workmux sidebar --session       # Toggle current session only, or opt out of global mode
+workmux sidebar --position top  # Override configured placement for this toggle
 ```
 
 The sidebar displays:
@@ -1753,13 +1754,17 @@ When the global sidebar is active, `workmux sidebar --session` hides it in the
 current tmux session only. Run the same command again to show it in that session
 again while keeping the global sidebar active elsewhere.
 
-Configure width and layout in `.workmux.yaml`:
+Configure placement, width, and layout in `.workmux.yaml`:
 
 ```yaml
 sidebar:
-  width: 40 # absolute columns, or "15%" for percentage
-  layout: tiles # "compact" or "tiles" (default)
+  position: left # "left" (default) or "top"
+  width: 40 # left width in columns, or "15%" for percentage
+  layout: tiles # left only: "compact" or "tiles" (default)
 ```
+
+Use `workmux sidebar --position top` or `--position left` to override the
+configured placement when enabling the sidebar.
 
 #### Example tmux binding
 

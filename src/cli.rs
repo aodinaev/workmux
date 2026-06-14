@@ -1,5 +1,5 @@
 use crate::command::args::{MultiArgs, PromptArgs, RescueArgs, SetupFlags};
-use crate::config::MuxMode;
+use crate::config::{MuxMode, SidebarPosition};
 use crate::{claude, command, config, git, nerdfont};
 use anyhow::{Context, Result};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
@@ -634,6 +634,11 @@ enum Commands {
         /// Scope sidebar to this session, or toggle this session off when global sidebar is active
         #[arg(short = 's', long)]
         session: bool,
+
+        /// Sidebar placement for this toggle
+        #[arg(long, value_enum)]
+        position: Option<SidebarPosition>,
+
         #[command(subcommand)]
         action: Option<SidebarAction>,
     },
@@ -1033,7 +1038,11 @@ pub fn run() -> Result<()> {
         Commands::Docs => command::docs::run(),
         Commands::Changelog => command::changelog::run(),
         Commands::Update => command::update::run(),
-        Commands::Sidebar { session, action } => match action {
+        Commands::Sidebar {
+            session,
+            position,
+            action,
+        } => match action {
             Some(SidebarAction::Next) => {
                 command::sidebar::navigate(command::sidebar::NavAction::Next)
             }
@@ -1045,9 +1054,9 @@ pub fn run() -> Result<()> {
             }
             None => {
                 if session {
-                    command::sidebar::toggle_session()
+                    command::sidebar::toggle_session(position)
                 } else {
-                    command::sidebar::toggle()
+                    command::sidebar::toggle(position)
                 }
             }
         },
@@ -1194,6 +1203,33 @@ fn print_fish_dynamic_completion() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_position_flag_parses_supported_values() {
+        let cli = Cli::try_parse_from(["workmux", "sidebar", "--position", "top"]).unwrap();
+
+        match cli.command {
+            Commands::Sidebar {
+                position, action, ..
+            } => {
+                assert_eq!(position, Some(SidebarPosition::Top));
+                assert!(action.is_none());
+            }
+            _ => panic!("expected sidebar command"),
+        }
+    }
+
+    #[test]
+    fn sidebar_position_flag_rejects_unsupported_values() {
+        let err = match Cli::try_parse_from(["workmux", "sidebar", "--position", "right"]) {
+            Ok(_) => panic!("expected invalid position"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
+        assert!(err.to_string().contains("left"));
+        assert!(err.to_string().contains("top"));
+    }
 
     #[test]
     fn prepare_zsh_base_renames_function_identifiers() {

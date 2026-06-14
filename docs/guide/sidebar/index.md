@@ -22,13 +22,16 @@ configured and tmux as the backend.
 Toggle the sidebar with:
 
 ```bash
-workmux sidebar            # All sessions (default)
-workmux sidebar --session  # Current session only, or opt out of global mode
+workmux sidebar                 # All sessions (default)
+workmux sidebar --session       # Current session only, or opt out of global mode
+workmux sidebar --position top  # Override configured placement for this toggle
 ```
 
 By default, the sidebar appears in all existing and newly created tmux windows
 across all sessions. Use `--session` to scope it to the current session only,
-leaving other sessions untouched. Running the command again disables it.
+leaving other sessions untouched. Use `--position left` or `--position top` to
+override the configured placement when enabling the sidebar. Running the command
+again disables it.
 
 When the global sidebar is active, `workmux sidebar --session` hides it in the
 current tmux session only. Run it again to show the sidebar in that session
@@ -95,7 +98,8 @@ When set explicitly, the clamp is removed (minimum 10 columns). Height only
 applies to `position: top`; set it as a row count for the number of horizontal
 lines you want to show. Horizontal item width defaults to 24 columns and is
 clamped between 12 and 80. Position changes take effect the next time you toggle
-the sidebar off and on.
+the sidebar off and on. Use `workmux sidebar --position top` or `--position left`
+to override the configured placement for that toggle.
 
 ## Layout modes
 

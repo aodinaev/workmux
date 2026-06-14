@@ -24,6 +24,8 @@ description: Release notes and version history for workmux
 
 ## Unreleased
 
+- Add `workmux sidebar --position <left|top>` to choose sidebar placement when
+  enabling the sidebar, overriding the configured default for that toggle.
 - Add structured [named agent profiles](https://workmux.raine.dev/guide/agents#named-agents)
   with separate `type`, `command`, `args`, and `env` fields, including support
   for `env` values sourced from launch environment variables with `from_env`.

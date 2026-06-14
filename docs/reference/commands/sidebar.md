@@ -9,8 +9,9 @@ windows. Shows all active agents across all sessions and projects with live
 status updates.
 
 ```bash
-workmux sidebar            # Toggle sidebar on/off (all sessions)
-workmux sidebar --session  # Toggle current session only, or opt out of global mode
+workmux sidebar                 # Toggle sidebar on/off (all sessions)
+workmux sidebar --session       # Toggle current session only, or opt out of global mode
+workmux sidebar --position top  # Override configured placement for this toggle
 ```
 
 ## What it shows
@@ -94,7 +95,9 @@ row count for the number of horizontal lines you want to show. The top bar uses 
 horizontal chip layout, so `v` has no effect there. Horizontal templates render
 as many configured lines as the current height allows. `horizontal.item_width`
 controls each chip width and is clamped between 12 and 80 columns. Position
-changes take effect after toggling the sidebar off and on.
+changes take effect after toggling the sidebar off and on. Use
+`workmux sidebar --position top` or `--position left` to override the configured
+placement for that toggle.
 
 ## How it works
 

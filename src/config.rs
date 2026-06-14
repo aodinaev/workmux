@@ -224,7 +224,7 @@ pub struct SidebarConfig {
 }
 
 /// Sidebar pane position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarPosition {
     #[default]

@@ -209,8 +209,11 @@ fn clear_sidebar_globals() {
     }
 }
 
-fn configured_position(config: &crate::config::Config) -> SidebarPosition {
-    config.sidebar.position.unwrap_or_default()
+fn configured_position(
+    config: &crate::config::Config,
+    position: Option<SidebarPosition>,
+) -> SidebarPosition {
+    position.or(config.sidebar.position).unwrap_or_default()
 }
 
 pub(super) fn read_sidebar_position(config: &crate::config::Config) -> SidebarPosition {
@@ -225,7 +228,7 @@ pub(super) fn read_sidebar_position(config: &crate::config::Config) -> SidebarPo
         }
     }
 
-    configured_position(config)
+    configured_position(config, None)
 }
 
 fn set_sidebar_position(position: SidebarPosition) {
@@ -466,7 +469,7 @@ pub(super) fn reflow_all_to_window_extent(window_extent: Option<u16>) -> Result<
 }
 
 /// Toggle the sidebar globally across all tmux windows.
-pub fn toggle() -> Result<()> {
+pub fn toggle(position: Option<SidebarPosition>) -> Result<()> {
     let config = crate::config::Config::load(None)?;
 
     if std::env::var("TMUX").is_err() {
@@ -506,7 +509,7 @@ pub fn toggle() -> Result<()> {
     Cmd::new("tmux")
         .args(&["set-option", "-g", "@workmux_sidebar_enabled", "1"])
         .run()?;
-    let position = configured_position(&config);
+    let position = configured_position(&config, position);
     set_sidebar_position(position);
     set_scope(&SidebarScope::Global);
 
@@ -520,7 +523,7 @@ pub fn toggle() -> Result<()> {
 }
 
 /// Toggle the sidebar for the current tmux session only.
-pub fn toggle_session() -> Result<()> {
+pub fn toggle_session(position: Option<SidebarPosition>) -> Result<()> {
     let config = crate::config::Config::load(None)?;
 
     if std::env::var("TMUX").is_err() {
@@ -576,7 +579,7 @@ pub fn toggle_session() -> Result<()> {
     Cmd::new("tmux")
         .args(&["set-option", "-g", "@workmux_sidebar_enabled", "1"])
         .run()?;
-    let position = configured_position(&config);
+    let position = configured_position(&config, position);
     set_sidebar_position(position);
 
     // Add this session to the scope set
