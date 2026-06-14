@@ -633,6 +633,34 @@ fn build_deferred_cleanup_script(dc: &DeferredCleanup) -> String {
     format!("; {}", cmds.join("; "))
 }
 
+fn cleanup_body_for(cleanup_result: &CleanupResult) -> String {
+    let cleanup_script = if let Some(ref dc) = cleanup_result.deferred_cleanup {
+        build_deferred_cleanup_script(dc)
+    } else {
+        cleanup_result
+            .trash_path_to_delete
+            .as_ref()
+            .map(|tp| format!("; rm -rf {}", shell_quote(&tp.to_string_lossy())))
+            .unwrap_or_default()
+    };
+    cleanup_script
+        .strip_prefix("; ")
+        .unwrap_or(&cleanup_script)
+        .to_string()
+}
+
+fn close_and_cleanup_command(kill_cmd: Option<&str>, cleanup_body: &str) -> String {
+    kill_cmd
+        .map(|cmd| {
+            if cleanup_body.is_empty() {
+                cmd.to_string()
+            } else {
+                format!("{} && {}", cmd, cleanup_body)
+            }
+        })
+        .unwrap_or_else(|| cleanup_body.to_string())
+}
+
 /// Navigate to the target branch window and close the source window.
 /// Handles both cases: running inside the source window (async) and outside (sync).
 /// `target_window_name` is the window name of the merge target.
@@ -718,17 +746,6 @@ pub fn navigate_to_target_and_close(
             let delay = Duration::from_millis(WINDOW_CLOSE_DELAY_MS);
             let delay_secs = format!("{:.3}", delay.as_secs_f64());
 
-            // Build cleanup script: prefer full deferred cleanup, fall back to trash-only
-            let cleanup_script = if let Some(ref dc) = cleanup_result.deferred_cleanup {
-                build_deferred_cleanup_script(dc)
-            } else {
-                cleanup_result
-                    .trash_path_to_delete
-                    .as_ref()
-                    .map(|tp| format!("; rm -rf {}", shell_quote(&tp.to_string_lossy())))
-                    .unwrap_or_default()
-            };
-
             // For session mode, switch to the last session before killing so
             // the client returns to where the user was previously instead of
             // tmux picking an arbitrary session.
@@ -741,17 +758,9 @@ pub fn navigate_to_target_and_close(
                 String::new()
             };
 
-            let cleanup_body = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script);
-            let close_and_cleanup = kill_source_cmd
-                .as_ref()
-                .map(|cmd| {
-                    if cleanup_body.is_empty() {
-                        cmd.to_string()
-                    } else {
-                        format!("{} && {}", cmd, cleanup_body)
-                    }
-                })
-                .unwrap_or_else(|| cleanup_body.to_string());
+            let cleanup_body = cleanup_body_for(cleanup_result);
+            let close_and_cleanup =
+                close_and_cleanup_command(kill_source_cmd.as_deref(), &cleanup_body);
 
             let script = format!(
                 "sleep {delay}; {switch}{close_and_cleanup}",
@@ -786,34 +795,15 @@ pub fn navigate_to_target_and_close(
         let delay = Duration::from_millis(WINDOW_CLOSE_DELAY_MS);
         let delay_secs = format!("{:.3}", delay.as_secs_f64());
 
-        // Build cleanup script: prefer full deferred cleanup, fall back to trash-only
-        let cleanup_script = if let Some(ref dc) = cleanup_result.deferred_cleanup {
-            build_deferred_cleanup_script(dc)
-        } else {
-            cleanup_result
-                .trash_path_to_delete
-                .as_ref()
-                .map(|tp| format!("; rm -rf {}", shell_quote(&tp.to_string_lossy())))
-                .unwrap_or_default()
-        };
-
         // Navigate to target window before killing source
         let select_part = select_target_cmd
             .as_ref()
             .map(|cmd| format!("{}; ", cmd))
             .unwrap_or_default();
 
-        let cleanup_body = cleanup_script.strip_prefix("; ").unwrap_or(&cleanup_script);
-        let close_and_cleanup = kill_source_cmd
-            .as_ref()
-            .map(|cmd| {
-                if cleanup_body.is_empty() {
-                    cmd.to_string()
-                } else {
-                    format!("{} && {}", cmd, cleanup_body)
-                }
-            })
-            .unwrap_or_else(|| cleanup_body.to_string());
+        let cleanup_body = cleanup_body_for(cleanup_result);
+        let close_and_cleanup =
+            close_and_cleanup_command(kill_source_cmd.as_deref(), &cleanup_body);
 
         let script = format!(
             "sleep {delay}; {select}{close_and_cleanup}",
