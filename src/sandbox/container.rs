@@ -791,7 +791,11 @@ mod tests {
         }
     }
 
-    fn test_build_args(worktree: &Path, config: &SandboxConfig) -> Vec<String> {
+    fn test_build_run_args_result_for_worktree(
+        worktree: &Path,
+        config: &SandboxConfig,
+        network_deny: bool,
+    ) -> Result<Vec<String>> {
         build_docker_run_args(
             "claude",
             config,
@@ -800,9 +804,19 @@ mod tests {
             worktree,
             &[],
             None,
-            false,
+            network_deny,
         )
-        .unwrap()
+    }
+
+    fn test_build_run_args_result(
+        config: &SandboxConfig,
+        network_deny: bool,
+    ) -> Result<Vec<String>> {
+        test_build_run_args_result_for_worktree(Path::new("/tmp/project"), config, network_deny)
+    }
+
+    fn test_build_args(worktree: &Path, config: &SandboxConfig) -> Vec<String> {
+        test_build_run_args_result_for_worktree(worktree, config, false).unwrap()
     }
 
     fn sandbox_config(
@@ -823,17 +837,7 @@ mod tests {
     }
 
     fn test_build_run_args(config: &SandboxConfig, network_deny: bool) -> Vec<String> {
-        build_docker_run_args(
-            "claude",
-            config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            network_deny,
-        )
-        .unwrap()
+        test_build_run_args_result(config, network_deny).unwrap()
     }
 
     fn test_build_run_args_for_agent(agent: &str, config: &SandboxConfig) -> Vec<String> {
@@ -969,28 +973,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(".env"), "SECRET=1").unwrap();
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::AppleContainer),
-                excluded_files: Some(vec![".env".to_string()]),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            ..Default::default()
-        };
+        let config = sandbox_config(SandboxRuntime::AppleContainer, |c| {
+            c.excluded_files = Some(vec![".env".to_string()]);
+        });
 
-        let err = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            tmp.path(),
-            tmp.path(),
-            &[],
-            None,
-            false,
-        )
-        .expect_err("expected hard error when excluded_files is set on apple-container");
+        let err = test_build_run_args_result_for_worktree(tmp.path(), &config, false)
+            .expect_err("expected hard error when excluded_files is set on apple-container");
 
         let msg = format!("{err}");
         assert!(
@@ -1359,16 +1347,8 @@ mod tests {
     fn test_build_args_extra_mounts_readonly() {
         use crate::config::ExtraMount;
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            extra_mounts: Some(vec![ExtraMount::Path("/tmp/notes".to_string())]),
-            ..Default::default()
-        };
+        let mut config = sandbox_config(SandboxRuntime::Docker, |_| {});
+        config.extra_mounts = Some(vec![ExtraMount::Path("/tmp/notes".to_string())]);
         let args = test_build_run_args(&config, false);
 
         let args_str = args.join(" ");
@@ -1379,20 +1359,12 @@ mod tests {
     fn test_build_args_extra_mounts_writable_with_guest_path() {
         use crate::config::ExtraMount;
 
-        let config = SandboxConfig {
-            enabled: Some(true),
-            container: ContainerConfig {
-                runtime: Some(SandboxRuntime::Docker),
-                ..Default::default()
-            },
-            image: Some("test-image:latest".to_string()),
-            extra_mounts: Some(vec![ExtraMount::Spec {
-                host_path: "/tmp/data".to_string(),
-                guest_path: Some("/mnt/data".to_string()),
-                writable: Some(true),
-            }]),
-            ..Default::default()
-        };
+        let mut config = sandbox_config(SandboxRuntime::Docker, |_| {});
+        config.extra_mounts = Some(vec![ExtraMount::Spec {
+            host_path: "/tmp/data".to_string(),
+            guest_path: Some("/mnt/data".to_string()),
+            writable: Some(true),
+        }]);
         let args = test_build_run_args(&config, false);
 
         let args_str = args.join(" ");
@@ -1686,16 +1658,7 @@ mod tests {
         let config = sandbox_config(SandboxRuntime::AppleContainer, |c| {
             c.devices = Some(vec![ContainerDevice::String("/dev/kvm".to_string())]);
         });
-        let result = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        );
+        let result = test_build_run_args_result(&config, false);
         assert!(result.is_err());
     }
 
@@ -1704,16 +1667,7 @@ mod tests {
         let config = sandbox_config(SandboxRuntime::AppleContainer, |c| {
             c.group_add = Some(vec!["dialout".to_string()]);
         });
-        let result = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        );
+        let result = test_build_run_args_result(&config, false);
         assert!(result.is_err());
     }
 
