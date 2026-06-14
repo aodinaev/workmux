@@ -861,6 +861,46 @@ mod tests {
         }
     }
 
+    fn test_build_deny_args() -> Vec<String> {
+        test_build_run_args(&make_config(), true)
+    }
+
+    fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
+        args.windows(2)
+            .filter(|w| w[0] == flag)
+            .map(|w| w[1].as_str())
+            .collect()
+    }
+
+    fn assert_flag_eq(args: &[String], flag: &str, expected: &str) {
+        let values = find_flag_value(args, flag);
+        assert_eq!(
+            values.as_slice(),
+            [expected],
+            "expected single {flag}={expected}, got: {values:?} in {args:?}"
+        );
+    }
+
+    fn assert_agent_credential_mount(
+        args: &[String],
+        expected_target: Option<&str>,
+        excluded: &[&str],
+    ) {
+        let args_str = args.join(" ");
+        if let Some(target) = expected_target {
+            assert!(
+                args_str.contains(&format!("target={target}")),
+                "expected credential mount target={target}, got: {args_str}"
+            );
+        }
+        for item in excluded {
+            assert!(
+                !args_str.contains(item),
+                "unexpected credential mount {item}, got: {args_str}"
+            );
+        }
+    }
+
     #[test]
     fn test_build_args_basic() {
         let config = make_config();
@@ -1329,17 +1369,7 @@ mod tests {
             extra_mounts: Some(vec![ExtraMount::Path("/tmp/notes".to_string())]),
             ..Default::default()
         };
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_run_args(&config, false);
 
         let args_str = args.join(" ");
         assert!(args_str.contains("type=bind,source=/tmp/notes,target=/tmp/notes,readonly"));
@@ -1363,17 +1393,7 @@ mod tests {
             }]),
             ..Default::default()
         };
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_run_args(&config, false);
 
         let args_str = args.join(" ");
         assert!(args_str.contains("type=bind,source=/tmp/data,target=/mnt/data"));
@@ -1383,97 +1403,52 @@ mod tests {
 
     #[test]
     fn test_build_args_gemini_agent_credential_mount() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "gemini",
-            &config,
-            "gemini",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
-
-        let args_str = args.join(" ");
-        // Gemini agent should mount ~/.gemini to /tmp/.gemini
-        assert!(args_str.contains("target=/tmp/.gemini"));
-        // Gemini agent should NOT have Claude-specific mounts
-        assert!(!args_str.contains("target=/tmp/.claude.json"));
-        assert!(!args_str.contains("target=/tmp/.claude,"));
-        assert!(!args_str.contains("/home/user/.codex"));
+        let args = test_build_run_args_for_agent("gemini", &make_config());
+        assert_agent_credential_mount(
+            &args,
+            Some("/tmp/.gemini"),
+            &[
+                "target=/tmp/.claude.json",
+                "target=/tmp/.claude,",
+                "/home/user/.codex",
+            ],
+        );
     }
 
     #[test]
     fn test_build_args_codex_agent_credential_mount() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "codex",
-            &config,
-            "codex",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
-
-        let args_str = args.join(" ");
-        // Codex agent should mount ~/.codex to /home/user/.codex (matches CODEX_HOME)
-        assert!(args_str.contains("target=/home/user/.codex"));
-        // CODEX_HOME set to avoid "Refusing to create helper binaries under temporary dir" warning
-        assert!(args_str.contains("CODEX_HOME=/home/user/.codex"));
-        // Codex agent should NOT have Claude-specific mounts
-        assert!(!args_str.contains("target=/tmp/.claude.json"));
-        assert!(!args_str.contains("target=/tmp/.gemini"));
+        let args = test_build_run_args_for_agent("codex", &make_config());
+        assert_agent_credential_mount(
+            &args,
+            Some("/home/user/.codex"),
+            &["target=/tmp/.claude.json", "target=/tmp/.gemini"],
+        );
+        assert!(args.iter().any(|a| a == "CODEX_HOME=/home/user/.codex"));
     }
 
     #[test]
     fn test_build_args_opencode_agent_credential_mount() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "opencode",
-            &config,
-            "opencode",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
-
-        let args_str = args.join(" ");
-        // OpenCode agent should mount ~/.local/share/opencode to /tmp/.local/share/opencode
-        assert!(args_str.contains("target=/tmp/.local/share/opencode"));
-        // OpenCode agent should NOT have Claude-specific mounts
-        assert!(!args_str.contains("target=/tmp/.claude.json"));
-        assert!(!args_str.contains("target=/tmp/.gemini"));
+        let args = test_build_run_args_for_agent("opencode", &make_config());
+        assert_agent_credential_mount(
+            &args,
+            Some("/tmp/.local/share/opencode"),
+            &["target=/tmp/.claude.json", "target=/tmp/.gemini"],
+        );
     }
 
     #[test]
     fn test_build_args_unknown_agent_no_credential_mount() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "unknown-agent",
-            &config,
-            "unknown-agent",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
+        let args = test_build_run_args_for_agent("unknown-agent", &make_config());
+        assert_agent_credential_mount(
+            &args,
             None,
-            false,
-        )
-        .unwrap();
-
-        let args_str = args.join(" ");
-        // Unknown agent should NOT have any agent credential mounts
-        assert!(!args_str.contains("target=/tmp/.claude"));
-        assert!(!args_str.contains("target=/tmp/.gemini"));
-        assert!(!args_str.contains("/home/user/.codex"));
-        assert!(!args_str.contains("target=/tmp/.local/share/opencode"));
+            &[
+                "target=/tmp/.claude",
+                "target=/tmp/.gemini",
+                "/home/user/.codex",
+                "target=/tmp/.local/share/opencode",
+            ],
+        );
     }
 
     #[test]
@@ -1486,17 +1461,7 @@ mod tests {
             agent_config_dir: Some(tmp.path().join("{agent}").to_string_lossy().to_string()),
             ..make_config()
         };
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            false,
-        )
-        .unwrap();
+        let args = test_build_run_args(&config, false);
 
         let args_str = args.join(" ");
         assert!(args_str.contains(&format!(
@@ -1509,18 +1474,7 @@ mod tests {
 
     #[test]
     fn test_build_args_network_deny_has_cap_net_admin() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            true, // network_deny
-        )
-        .unwrap();
+        let args = test_build_deny_args();
 
         assert!(args.contains(&"--cap-add=NET_ADMIN".to_string()));
         assert!(args.contains(&"--security-opt".to_string()));
@@ -1529,18 +1483,7 @@ mod tests {
 
     #[test]
     fn test_build_args_network_deny_no_user_flag() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            true,
-        )
-        .unwrap();
+        let args = test_build_deny_args();
 
         // Deny mode should NOT have --user (container starts as root)
         assert!(!args.contains(&"--user".to_string()));
@@ -1548,18 +1491,7 @@ mod tests {
 
     #[test]
     fn test_build_args_network_deny_has_target_uid_gid() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            true,
-        )
-        .unwrap();
+        let args = test_build_deny_args();
 
         let args_str = args.join(" ");
         assert!(args_str.contains("WM_TARGET_UID="));
@@ -1568,18 +1500,7 @@ mod tests {
 
     #[test]
     fn test_build_args_network_deny_wraps_with_network_init() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            true,
-        )
-        .unwrap();
+        let args = test_build_deny_args();
 
         // Command should be: image network-init.sh sh -c <command>
         let image_idx = args.iter().position(|a| a == "test-image:latest").unwrap();
@@ -1591,18 +1512,7 @@ mod tests {
 
     #[test]
     fn test_build_args_network_deny_path_includes_sbin() {
-        let config = make_config();
-        let args = build_docker_run_args(
-            "claude",
-            &config,
-            "claude",
-            Path::new("/tmp/project"),
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            true,
-        )
-        .unwrap();
+        let args = test_build_deny_args();
 
         let path_arg = args.iter().find(|a| a.starts_with("PATH=")).unwrap();
         assert!(
@@ -1684,9 +1594,7 @@ mod tests {
         let config = sandbox_config(SandboxRuntime::AppleContainer, |_| {});
         let args = test_build_run_args(&config, false);
 
-        // Apple Container should get --memory 16G by default
-        let mem_idx = args.iter().position(|a| a == "--memory").unwrap();
-        assert_eq!(args[mem_idx + 1], "16G");
+        assert_flag_eq(&args, "--memory", "16G");
         // No --cpus unless explicitly configured
         assert!(!args.contains(&"--cpus".to_string()));
     }
@@ -1699,10 +1607,8 @@ mod tests {
         });
         let args = test_build_run_args(&config, false);
 
-        let mem_idx = args.iter().position(|a| a == "--memory").unwrap();
-        assert_eq!(args[mem_idx + 1], "8G");
-        let cpu_idx = args.iter().position(|a| a == "--cpus").unwrap();
-        assert_eq!(args[cpu_idx + 1], "8");
+        assert_flag_eq(&args, "--memory", "8G");
+        assert_flag_eq(&args, "--cpus", "8");
     }
 
     #[test]
@@ -1722,16 +1628,7 @@ mod tests {
         });
         let args = test_build_run_args(&config, false);
 
-        // Explicit memory should be passed even for Docker
-        let mem_idx = args.iter().position(|a| a == "--memory").unwrap();
-        assert_eq!(args[mem_idx + 1], "4G");
-    }
-
-    fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
-        args.windows(2)
-            .filter(|w| w[0] == flag)
-            .map(|w| w[1].as_str())
-            .collect()
+        assert_flag_eq(&args, "--memory", "4G");
     }
 
     #[test]
