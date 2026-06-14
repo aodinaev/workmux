@@ -78,41 +78,33 @@ fn added_removed_fragments(
     (added, removed)
 }
 
-fn added_removed_variant_ladder(
+fn diff_variant_ladder(
+    prefix: Option<&StyledFragment>,
     added: Option<StyledFragment>,
     removed: Option<StyledFragment>,
+    icon_only_fallback: bool,
 ) -> Vec<Vec<StyledFragment>> {
-    let mut variants = Vec::new();
-    match (&added, &removed) {
-        (Some(a), Some(r)) => {
-            variants.push(vec![a.clone(), r.clone()]);
-            variants.push(vec![a.clone()]);
-            variants.push(vec![r.clone()]);
+    let prepend = |mut parts: Vec<StyledFragment>| -> Vec<StyledFragment> {
+        if let Some(p) = prefix {
+            parts.insert(0, p.clone());
         }
-        (Some(a), None) => variants.push(vec![a.clone()]),
-        (None, Some(r)) => variants.push(vec![r.clone()]),
-        (None, None) => {}
-    }
-    variants
-}
+        parts
+    };
 
-fn uncommitted_variant_ladder(
-    icon: StyledFragment,
-    added: Option<StyledFragment>,
-    removed: Option<StyledFragment>,
-) -> Vec<Vec<StyledFragment>> {
     let mut variants = Vec::new();
     match (&added, &removed) {
         (Some(a), Some(r)) => {
-            variants.push(vec![icon.clone(), a.clone(), r.clone()]);
-            variants.push(vec![icon.clone(), a.clone()]);
-            variants.push(vec![icon.clone(), r.clone()]);
+            variants.push(prepend(vec![a.clone(), r.clone()]));
+            variants.push(prepend(vec![a.clone()]));
+            variants.push(prepend(vec![r.clone()]));
         }
-        (Some(a), None) => variants.push(vec![icon.clone(), a.clone()]),
-        (None, Some(r)) => variants.push(vec![icon.clone(), r.clone()]),
+        (Some(a), None) => variants.push(prepend(vec![a.clone()])),
+        (None, Some(r)) => variants.push(prepend(vec![r.clone()])),
         (None, None) => {}
     }
-    variants.push(vec![icon]);
+    if icon_only_fallback && let Some(p) = prefix {
+        variants.push(vec![p.clone()]);
+    }
     variants
 }
 
@@ -251,14 +243,6 @@ pub(crate) fn format_sidebar_git_stats(
         return (vec![], 0);
     }
 
-    // Width of a set of spans: text widths + a single space between each pair.
-    let calc_width = |spans: &[(String, Style)]| -> usize {
-        if spans.is_empty() {
-            return 0;
-        }
-        spans.iter().map(|(s, _)| display_width(s)).sum::<usize>() + spans.len() - 1
-    };
-
     // Build rebase indicator (shown first, highest priority)
     let mut rebase_spans: Vec<(String, Style)> = Vec::new();
     if status.is_rebasing {
@@ -305,20 +289,6 @@ pub(crate) fn format_sidebar_git_stats(
         }
     }
 
-    // Insert a single space between adjacent spans (no trailing space).
-    let interleave = |spans: Vec<(String, Style)>| -> Vec<(String, Style)> {
-        let mut out: Vec<(String, Style)> = Vec::with_capacity(spans.len() * 2);
-        let mut first = true;
-        for span in spans {
-            if !first {
-                out.push((" ".to_string(), Style::default()));
-            }
-            first = false;
-            out.push(span);
-        }
-        out
-    };
-
     // Try variants in priority order: full > drop committed > drop uncommitted > rebase only.
     let candidates: Vec<Vec<(String, Style)>> = vec![
         {
@@ -336,9 +306,9 @@ pub(crate) fn format_sidebar_git_stats(
     ];
 
     for spans in candidates {
-        let width = calc_width(&spans);
+        let width = interleaved_width(&spans);
         if width > 0 && width <= available_width {
-            return (interleave(spans), width);
+            return (interleave_spans(spans), width);
         }
     }
     (vec![], 0)
@@ -419,7 +389,7 @@ pub(crate) fn format_committed_spans(
     let (added, removed) =
         added_removed_fragments(status.lines_added, status.lines_removed, style_a, style_r);
 
-    pick_fitting_variant(added_removed_variant_ladder(added, removed), max_width)
+    pick_fitting_variant(diff_variant_ladder(None, added, removed, false), max_width)
 }
 
 /// Format the uncommitted/diff segment with self-fitting.
@@ -451,7 +421,10 @@ pub(crate) fn format_uncommitted_spans(
         Style::default().fg(colors.danger),
     );
 
-    pick_fitting_variant(uncommitted_variant_ladder(icon, added, removed), max_width)
+    pick_fitting_variant(
+        diff_variant_ladder(Some(&icon), added, removed, true),
+        max_width,
+    )
 }
 
 /// Format the rebase indicator with self-fitting.
