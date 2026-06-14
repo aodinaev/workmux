@@ -538,6 +538,10 @@ mod tests {
         }
     }
 
+    fn tokens(template: &str) -> Vec<Token> {
+        super::super::parser::parse_line(template).expect("test template should parse")
+    }
+
     fn make_context(agent: &AgentPane) -> RowContext<'_> {
         // Build a minimal RowContext manually for unit tests
         RowContext {
@@ -567,14 +571,7 @@ mod tests {
     fn render_line_with_fill() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Literal(" ".to_string()),
-            Token::Fill,
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::Elapsed),
-        ];
-        let text = render_text(&ctx, &tokens, 20);
+        let text = render_text(&ctx, &tokens("{primary} {fill} {elapsed}"), 20);
         // primary = "feature-auth" (12 cols), elapsed = "5:23" (4 cols), 2 spaces, fill = 2
         // left gets 20 - 4 - 2 = 14; primary is 12 so padded by 2
         assert!(text.contains("feature-auth"));
@@ -585,12 +582,7 @@ mod tests {
     fn render_line_narrow_truncates_flex() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let text = render_text(&ctx, &tokens, 10);
+        let text = render_text(&ctx, &tokens("{primary}{fill}{elapsed}"), 10);
         // elapsed = 4, available = 10 - 4 = 6, primary truncated to ~5 + ellipsis
         assert!(text.contains("5:23"));
         assert!(text.contains('…'));
@@ -600,16 +592,9 @@ mod tests {
     fn render_line_drops_right_token_when_narrow() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Literal(" ".to_string()),
-            Token::Fill,
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::Elapsed),
-        ];
         // Width of 4: right (5) + left fixed (1) > 4, so elapsed is dropped,
         // then primary is truncated to fit.
-        let text = render_text(&ctx, &tokens, 4);
+        let text = render_text(&ctx, &tokens("{primary} {fill} {elapsed}"), 4);
         // Elapsed should be dropped, primary truncated
         assert!(!text.contains("5:23"));
         assert!(text.contains('…'));
@@ -709,14 +694,7 @@ mod tests {
     fn empty_pr_tokens_collapse_joiner_space() {
         let agent = test_agent("pr");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::PrNumber),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::PrChecks),
-        ];
-        let text = render_text(&ctx, &tokens, 30);
+        let text = render_text(&ctx, &tokens("{primary} {pr_number} {pr_checks}"), 30);
         assert_eq!(text.trim_end(), "feature-auth");
     }
 
@@ -732,12 +710,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = make_git_context(&agent, &status);
-        let tokens = vec![
-            Token::Field(TokenId::GitCommitted),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::GitUncommitted),
-        ];
-        let text = render_text(&ctx, &tokens, 40);
+        let text = render_text(&ctx, &tokens("{git_committed} {git_uncommitted}"), 40);
         assert!(text.contains("+10 -5"), "missing committed: {:?}", text);
         assert!(text.contains("+3 -1"), "missing uncommitted: {:?}", text);
     }
@@ -753,12 +726,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = make_git_context(&agent, &status);
-        let tokens = vec![
-            Token::Field(TokenId::GitCommitted),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::GitUncommitted),
-        ];
-        let text = render_text(&ctx, &tokens, 40);
+        let text = render_text(&ctx, &tokens("{git_committed} {git_uncommitted}"), 40);
         // Should not start with a leading space from the dropped committed token
         assert!(
             !text.starts_with("  "),
@@ -778,8 +746,7 @@ mod tests {
         };
         let ctx = make_git_context(&agent, &status);
         // Natural: "+1278 -400" = 10 cols. Width 7 should fit "+1278" (5 cols) variant.
-        let tokens = vec![Token::Field(TokenId::GitCommitted)];
-        let text = render_text(&ctx, &tokens, 7);
+        let text = render_text(&ctx, &tokens("{git_committed}"), 7);
         assert!(text.contains("+1278"), "missing +1278: {:?}", text);
         assert!(!text.contains("-400"), "should drop -400: {:?}", text);
     }
@@ -795,8 +762,7 @@ mod tests {
         };
         let ctx = make_git_context(&agent, &status);
         // Width 1: only icon (1 col) fits.
-        let tokens = vec![Token::Field(TokenId::GitUncommitted)];
-        let text = render_text(&ctx, &tokens, 1);
+        let text = render_text(&ctx, &tokens("{git_uncommitted}"), 1);
         assert!(!text.contains('+'), "should drop numbers: {:?}", text);
         assert!(!text.contains('-'), "should drop numbers: {:?}", text);
     }
@@ -810,8 +776,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = make_git_context(&agent, &status);
-        let tokens = vec![Token::Fill, Token::Field(TokenId::GitCommitted)];
-        let text = render_text(&ctx, &tokens, 40);
+        let text = render_text(&ctx, &tokens("{fill}{git_committed}"), 40);
         assert!(text.contains("+10 -5"), "missing committed: {:?}", text);
     }
 
@@ -831,19 +796,8 @@ mod tests {
     fn trailing_style_after_right_field_does_not_change_drop_behavior() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let plain = vec![
-            Token::Field(TokenId::Primary),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let styled = vec![
-            Token::Field(TokenId::Primary),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-            Token::Style("default".to_string()),
-        ];
-        let plain_text = render_text(&ctx, &plain, 3);
-        let styled_text = render_text(&ctx, &styled, 3);
+        let plain_text = render_text(&ctx, &tokens("{primary}{fill}{elapsed}"), 3);
+        let styled_text = render_text(&ctx, &tokens("{primary}{fill}{elapsed}#[default]"), 3);
         assert_eq!(plain_text, styled_text);
     }
 
@@ -853,20 +807,12 @@ mod tests {
         let ctx = make_context(&agent);
         // Same template with and without a style wrap should render identical
         // visible text at the same width.
-        let plain = vec![
-            Token::Field(TokenId::Primary),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let styled = vec![
-            Token::Style("fg=red".to_string()),
-            Token::Field(TokenId::Primary),
-            Token::Style("default".to_string()),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let plain_text = render_text(&ctx, &plain, 30);
-        let styled_text = render_text(&ctx, &styled, 30);
+        let plain_text = render_text(&ctx, &tokens("{primary}{fill}{elapsed}"), 30);
+        let styled_text = render_text(
+            &ctx,
+            &tokens("#[fg=red]{primary}#[default]{fill}{elapsed}"),
+            30,
+        );
         assert_eq!(plain_text, styled_text);
     }
 
@@ -875,12 +821,7 @@ mod tests {
         use ratatui::style::Color;
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Style("fg=red".to_string()),
-            Token::Field(TokenId::Primary),
-            Token::Style("default".to_string()),
-        ];
-        let spans = render_line(&ctx, &tokens, 20);
+        let spans = render_line(&ctx, &tokens("#[fg=red]{primary}#[default]"), 20);
         let primary_span = spans
             .iter()
             .find(|s| s.content.contains("feature-auth"))
@@ -895,13 +836,7 @@ mod tests {
         let ctx = make_context(&agent);
         // "x" should be red, "y" should fall back to no-overlay (literals are
         // emitted with Style::default() by default).
-        let tokens = vec![
-            Token::Style("fg=red".to_string()),
-            Token::Literal("x".to_string()),
-            Token::Style("default".to_string()),
-            Token::Literal("y".to_string()),
-        ];
-        let spans = render_line(&ctx, &tokens, 10);
+        let spans = render_line(&ctx, &tokens("#[fg=red]x#[default]y"), 10);
         let x = spans.iter().find(|s| s.content == "x").unwrap();
         let y = spans.iter().find(|s| s.content == "y").unwrap();
         assert_eq!(x.style.fg, Some(Color::Red));
@@ -913,13 +848,8 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.is_stale = true;
-        let plain_tokens = vec![Token::Field(TokenId::Primary)];
-        let styled_tokens = vec![
-            Token::Style("fg=red,bold".to_string()),
-            Token::Field(TokenId::Primary),
-        ];
-        let plain = render_line(&ctx, &plain_tokens, 20);
-        let styled = render_line(&ctx, &styled_tokens, 20);
+        let plain = render_line(&ctx, &tokens("{primary}"), 20);
+        let styled = render_line(&ctx, &tokens("#[fg=red,bold]{primary}"), 20);
         let plain_primary = plain
             .iter()
             .find(|s| s.content.contains("feature-auth"))
@@ -947,14 +877,11 @@ mod tests {
     fn rendered_width_matches_requested_width_with_styles() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Style("fg=red".to_string()),
-            Token::Field(TokenId::Primary),
-            Token::Style("default".to_string()),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let spans = render_line(&ctx, &tokens, 25);
+        let spans = render_line(
+            &ctx,
+            &tokens("#[fg=red]{primary}#[default]{fill}{elapsed}"),
+            25,
+        );
         let total_width: usize = spans.iter().map(|s| display_width(&s.content)).sum();
         assert_eq!(total_width, 25);
     }
@@ -964,13 +891,8 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.status_icon_spans = vec![("✓".to_string(), Style::default())];
-        let tokens = vec![
-            Token::Field(TokenId::StatusIcon),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::Primary),
-        ];
         let options = RenderOptions::default().with_field_min_width(TokenId::StatusIcon, 2);
-        let text = render_text_with_options(&ctx, &tokens, 20, &options);
+        let text = render_text_with_options(&ctx, &tokens("{status_icon} {primary}"), 20, &options);
         assert!(text.starts_with("✓  feature-auth"), "{text:?}");
     }
 
@@ -979,12 +901,7 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.status_icon_spans = vec![("✓".to_string(), Style::default())];
-        let tokens = vec![
-            Token::Field(TokenId::StatusIcon),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::Primary),
-        ];
-        let text = render_text(&ctx, &tokens, 20);
+        let text = render_text(&ctx, &tokens("{status_icon} {primary}"), 20);
         assert!(text.starts_with("✓ feature-auth"), "{text:?}");
     }
 
@@ -993,13 +910,8 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.agent_label = "CC".to_string();
-        let tokens = vec![
-            Token::Field(TokenId::AgentLabel),
-            Token::Literal(":".to_string()),
-            Token::Field(TokenId::Elapsed),
-        ];
         let options = RenderOptions::default().with_field_min_width(TokenId::AgentLabel, 5);
-        let text = render_text_with_options(&ctx, &tokens, 20, &options);
+        let text = render_text_with_options(&ctx, &tokens("{agent_label}:{elapsed}"), 20, &options);
         assert!(text.starts_with("CC   :5:23"), "{text:?}");
     }
 
@@ -1007,13 +919,8 @@ mod tests {
     fn field_min_width_pads_flex_fields() {
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Literal(":".to_string()),
-            Token::Field(TokenId::Elapsed),
-        ];
         let options = RenderOptions::default().with_field_min_width(TokenId::Primary, 15);
-        let text = render_text_with_options(&ctx, &tokens, 20, &options);
+        let text = render_text_with_options(&ctx, &tokens("{primary}:{elapsed}"), 20, &options);
         assert!(text.starts_with("feature-auth   :5:23"), "{text:?}");
     }
 
@@ -1022,9 +929,8 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.status_icon_spans = vec![("✓".to_string(), Style::default())];
-        let tokens = vec![Token::Field(TokenId::StatusIcon)];
         let options = RenderOptions::default().with_field_min_width(TokenId::StatusIcon, 2);
-        let text = render_text_with_options(&ctx, &tokens, 1, &options);
+        let text = render_text_with_options(&ctx, &tokens("{status_icon}"), 1, &options);
         assert_eq!(display_width(&text), 1, "{text:?}");
     }
 
@@ -1033,13 +939,7 @@ mod tests {
         use ratatui::style::Color;
         let agent = test_agent("foo");
         let ctx = make_context(&agent);
-        let tokens = vec![
-            Token::Style("bg=blue".to_string()),
-            Token::Field(TokenId::Primary),
-            Token::Fill,
-            Token::Field(TokenId::Elapsed),
-        ];
-        let spans = render_line(&ctx, &tokens, 30);
+        let spans = render_line(&ctx, &tokens("#[bg=blue]{primary}{fill}{elapsed}"), 30);
         // Find the slack span (whitespace between primary and elapsed).
         let pad = spans
             .iter()
@@ -1053,14 +953,11 @@ mod tests {
         let agent = test_agent("foo");
         let mut ctx = make_context(&agent);
         ctx.pane_suffix.clear();
-        let tokens = vec![
-            Token::Field(TokenId::Primary),
-            Token::Field(TokenId::PaneSuffix),
-            Token::Style("fg=red".to_string()),
-            Token::Literal(" ".to_string()),
-            Token::Field(TokenId::Elapsed),
-        ];
-        let text = render_text(&ctx, &tokens, 30);
+        let text = render_text(
+            &ctx,
+            &tokens("{primary}{pane_suffix}#[fg=red] {elapsed}"),
+            30,
+        );
         // No double space between primary and elapsed when pane_suffix is
         // empty: the whitespace literal sandwiched after the style token is
         // dropped.
