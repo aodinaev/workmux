@@ -6,11 +6,10 @@ from typing import Any
 from ..conftest import MuxEnvironment, install_fake_gh_cli
 
 
-def setup_pr_remote_and_branch(
+def setup_pr_remote(
     env: MuxEnvironment,
     repo_path: Path,
     remote_repo_path: Path,
-    branch_name: str,
 ) -> None:
     github_url = "https://github.com/testowner/testrepo.git"
 
@@ -27,6 +26,15 @@ def setup_pr_remote_and_branch(
         cwd=repo_path,
     )
     env.run_command(["git", "push", "-u", "origin", "main"], cwd=repo_path)
+
+
+def setup_pr_remote_and_branch(
+    env: MuxEnvironment,
+    repo_path: Path,
+    remote_repo_path: Path,
+    branch_name: str,
+) -> None:
+    setup_pr_remote(env, repo_path, remote_repo_path)
 
     env.run_command(["git", "checkout", "-b", branch_name], cwd=repo_path)
     env.run_command(

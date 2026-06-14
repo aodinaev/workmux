@@ -11,6 +11,7 @@ from .conftest import (
 )
 from .support.pr import (
     install_fake_pr_view,
+    setup_pr_remote,
     setup_pr_remote_and_branch,
 )
 
@@ -229,20 +230,7 @@ def test_add_pr_fork_with_main_branch(mux_server, workmux_exe_path, remote_repo_
     repo_path = env.tmp_path
     setup_git_repo(repo_path, env.env)
 
-    github_url = "https://github.com/testowner/testrepo.git"
-    env.run_command(
-        ["git", "remote", "add", "origin", github_url],
-        cwd=repo_path,
-    )
-    env.run_command(
-        ["git", "remote", "set-url", "--push", "origin", str(remote_repo_path)],
-        cwd=repo_path,
-    )
-    env.run_command(
-        ["git", "config", f"url.{remote_repo_path}.insteadOf", github_url],
-        cwd=repo_path,
-    )
-    env.run_command(["git", "push", "-u", "origin", "main"], cwd=repo_path)
+    setup_pr_remote(env, repo_path, remote_repo_path)
 
     fork_repo_path = repo_path.parent / "fork_repo.git"
     env.run_command(
