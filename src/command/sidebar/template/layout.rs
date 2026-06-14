@@ -574,8 +574,7 @@ mod tests {
             Token::Literal(" ".to_string()),
             Token::Field(TokenId::Elapsed),
         ];
-        let spans = render_line(&ctx, &tokens, 20);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 20);
         // primary = "feature-auth" (12 cols), elapsed = "5:23" (4 cols), 2 spaces, fill = 2
         // left gets 20 - 4 - 2 = 14; primary is 12 so padded by 2
         assert!(text.contains("feature-auth"));
@@ -591,8 +590,7 @@ mod tests {
             Token::Fill,
             Token::Field(TokenId::Elapsed),
         ];
-        let spans = render_line(&ctx, &tokens, 10);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 10);
         // elapsed = 4, available = 10 - 4 = 6, primary truncated to ~5 + ellipsis
         assert!(text.contains("5:23"));
         assert!(text.contains('…'));
@@ -611,8 +609,7 @@ mod tests {
         ];
         // Width of 4: right (5) + left fixed (1) > 4, so elapsed is dropped,
         // then primary is truncated to fit.
-        let spans = render_line(&ctx, &tokens, 4);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 4);
         // Elapsed should be dropped, primary truncated
         assert!(!text.contains("5:23"));
         assert!(text.contains('…'));
@@ -638,27 +635,13 @@ mod tests {
     }
 
     fn make_git_context<'a>(agent: &'a AgentPane, status: &'a GitStatus) -> RowContext<'a> {
-        RowContext {
-            agent,
-            primary: String::new(),
-            secondary: String::new(),
-            pane_suffix: String::new(),
-            elapsed: String::new(),
-            status_icon_spans: vec![],
-            status_color: ratatui::style::Color::Reset,
-            pane_title: None,
-            git_status: Some(status),
-            pr_summary: None,
-            is_stale: false,
-            is_active: false,
-            is_selected: false,
-            palette: test_palette(),
-            agent_icon: String::new(),
-            agent_icon_color: None,
-            agent_label: String::new(),
-            idx: 0,
-            spinner_frame: 0,
-        }
+        let mut ctx = make_context(agent);
+        ctx.primary.clear();
+        ctx.secondary.clear();
+        ctx.elapsed.clear();
+        ctx.status_icon_spans.clear();
+        ctx.git_status = Some(status);
+        ctx
     }
 
     fn render_text(ctx: &RowContext, tokens: &[Token], width: usize) -> String {
@@ -796,10 +779,7 @@ mod tests {
         let ctx = make_git_context(&agent, &status);
         // Natural: "+1278 -400" = 10 cols. Width 7 should fit "+1278" (5 cols) variant.
         let tokens = vec![Token::Field(TokenId::GitCommitted)];
-        let text: String = render_line(&ctx, &tokens, 7)
-            .iter()
-            .map(|s| s.content.clone())
-            .collect();
+        let text = render_text(&ctx, &tokens, 7);
         assert!(text.contains("+1278"), "missing +1278: {:?}", text);
         assert!(!text.contains("-400"), "should drop -400: {:?}", text);
     }
@@ -816,8 +796,7 @@ mod tests {
         let ctx = make_git_context(&agent, &status);
         // Width 1: only icon (1 col) fits.
         let tokens = vec![Token::Field(TokenId::GitUncommitted)];
-        let spans = render_line(&ctx, &tokens, 1);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 1);
         assert!(!text.contains('+'), "should drop numbers: {:?}", text);
         assert!(!text.contains('-'), "should drop numbers: {:?}", text);
     }
@@ -886,14 +865,8 @@ mod tests {
             Token::Fill,
             Token::Field(TokenId::Elapsed),
         ];
-        let plain_text: String = render_line(&ctx, &plain, 30)
-            .iter()
-            .map(|s| s.content.clone())
-            .collect();
-        let styled_text: String = render_line(&ctx, &styled, 30)
-            .iter()
-            .map(|s| s.content.clone())
-            .collect();
+        let plain_text = render_text(&ctx, &plain, 30);
+        let styled_text = render_text(&ctx, &styled, 30);
         assert_eq!(plain_text, styled_text);
     }
 
@@ -966,8 +939,7 @@ mod tests {
         // template through the parser to exercise the real flow.
         use super::super::parser::parse_line;
         let tokens = parse_line("#[fg=red x").unwrap();
-        let spans = render_line(&ctx, &tokens, 20);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 20);
         assert!(text.contains("#[fg=red x"));
     }
 
@@ -1088,8 +1060,7 @@ mod tests {
             Token::Literal(" ".to_string()),
             Token::Field(TokenId::Elapsed),
         ];
-        let spans = render_line(&ctx, &tokens, 30);
-        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        let text = render_text(&ctx, &tokens, 30);
         // No double space between primary and elapsed when pane_suffix is
         // empty: the whitespace literal sandwiched after the style token is
         // dropped.
