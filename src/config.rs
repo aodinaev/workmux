@@ -1786,6 +1786,14 @@ impl SandboxConfig {
     /// Performs `{agent}` substitution and tilde expansion on the configured path.
     /// Falls back to the agent's default config directory when not configured.
     pub fn resolved_agent_config_dir(&self, agent: &str) -> Option<PathBuf> {
+        self.resolved_agent_config_dir_with_env(agent, |key| std::env::var_os(key))
+    }
+
+    fn resolved_agent_config_dir_with_env(
+        &self,
+        agent: &str,
+        get_env: impl Fn(&str) -> Option<std::ffi::OsString>,
+    ) -> Option<PathBuf> {
         if let Some(ref dir) = self.agent_config_dir {
             let expanded = dir.replace("{agent}", agent);
             Some(crate::util::expand_tilde(&expanded))
@@ -1799,8 +1807,7 @@ impl SandboxConfig {
                 "opencode" => Some(home.join(".local/share/opencode")),
                 "pi" => Some(home.join(".pi/agent")),
                 "omp" => Some(crate::agent_setup::omp::omp_agent_dir_with_env(
-                    &home,
-                    |key| std::env::var_os(key),
+                    &home, get_env,
                 )),
                 _ => None,
             }
@@ -3058,28 +3065,6 @@ mod tests {
         cfg(|config| edit(&mut config.theme))
     }
 
-    fn with_env_var<T>(key: &str, value: Option<&str>, run: impl FnOnce() -> T) -> T {
-        let prev = std::env::var_os(key);
-        match value {
-            Some(value) => unsafe {
-                std::env::set_var(key, value);
-            },
-            None => unsafe {
-                std::env::remove_var(key);
-            },
-        }
-        let result = run();
-        match prev {
-            Some(value) => unsafe {
-                std::env::set_var(key, value);
-            },
-            None => unsafe {
-                std::env::remove_var(key);
-            },
-        }
-        result
-    }
-
     fn pane(command: &str) -> PaneConfig {
         PaneConfig {
             command: Some(command.into()),
@@ -4045,24 +4030,28 @@ extra_mounts:
 
     #[test]
     fn test_resolved_agent_config_dir_default() {
-        with_env_var("PI_CONFIG_DIR", None, || {
-            let config = SandboxConfig::default();
-            let dir = config.resolved_agent_config_dir("claude").unwrap();
-            let home = home::home_dir().unwrap();
-            assert_eq!(dir, home.join(".claude"));
-            let dir = config.resolved_agent_config_dir("omp").unwrap();
-            assert_eq!(dir, home.join(".omp/agent"));
-        });
+        let config = SandboxConfig::default();
+        let dir = config
+            .resolved_agent_config_dir_with_env("claude", |_| None)
+            .unwrap();
+        let home = home::home_dir().unwrap();
+        assert_eq!(dir, home.join(".claude"));
+        let dir = config
+            .resolved_agent_config_dir_with_env("omp", |_| None)
+            .unwrap();
+        assert_eq!(dir, home.join(".omp/agent"));
     }
 
     #[test]
     fn test_resolved_agent_config_dir_omp_with_pi_config_dir() {
-        with_env_var("PI_CONFIG_DIR", Some("custom-omp"), || {
-            let config = SandboxConfig::default();
-            let dir = config.resolved_agent_config_dir("omp").unwrap();
-            let home = home::home_dir().unwrap();
-            assert_eq!(dir, home.join("custom-omp/agent"));
-        });
+        let config = SandboxConfig::default();
+        let dir = config
+            .resolved_agent_config_dir_with_env("omp", |key| {
+                (key == "PI_CONFIG_DIR").then(|| std::ffi::OsString::from("custom-omp"))
+            })
+            .unwrap();
+        let home = home::home_dir().unwrap();
+        assert_eq!(dir, home.join("custom-omp/agent"));
     }
 
     #[test]
