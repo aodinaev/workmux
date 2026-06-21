@@ -268,6 +268,32 @@ pub fn cleanup(
         None
     };
     let running_inside_target = current_matching_target.is_some();
+    let current_pane_id = if mux_running {
+        context.mux.current_pane_id()
+    } else {
+        None
+    };
+    let active_pane_id = if mux_running {
+        context.mux.active_pane_id()
+    } else {
+        None
+    };
+    let active_pane_info = active_pane_id
+        .as_deref()
+        .and_then(|pane_id| context.mux.get_live_pane_info(pane_id).ok().flatten());
+    info!(
+        handle = handle,
+        target_name = target_name,
+        mode = kind,
+        parent_session = ?parent_session,
+        current_pane_id = ?current_pane_id,
+        current_matching_target = ?current_matching_target,
+        running_inside_target,
+        active_pane_id = ?active_pane_id,
+        active_session = ?active_pane_info.as_ref().and_then(|info| info.session.as_deref()),
+        active_window = ?active_pane_info.as_ref().and_then(|info| info.window.as_deref()),
+        "cleanup:mux focus context"
+    );
 
     let mut result = CleanupResult {
         tmux_window_killed: false,
@@ -729,14 +755,23 @@ pub fn navigate_to_target_and_close(
         });
     let select_target_cmd = MuxHandle::shell_select_cmd_full(mux, target_mode, &target_full).ok();
 
-    debug!(
+    info!(
         prefix = prefix,
         target_window_name = target_window_name,
         mux_running = mux_running,
         target_exists = target_exists,
-        kind,
+        target_mode = crate::multiplexer::handle::mode_label(target_mode),
+        target_full = target_full,
+        source_handle = source_handle,
+        source_full = source_full,
+        source_mode = kind,
+        tmux_window_killed = cleanup_result.tmux_window_killed,
         window_to_close = ?cleanup_result.window_to_close_later,
+        window_target_to_close = ?cleanup_result.window_target_to_close_later,
+        target_id_to_close = ?cleanup_result.target_id_to_close_later,
         deferred_cleanup = cleanup_result.deferred_cleanup.is_some(),
+        current_pane_id = ?mux.current_pane_id(),
+        active_pane_id = ?mux.active_pane_id(),
         "navigate_to_target_and_close:entry"
     );
 
@@ -833,6 +868,14 @@ pub fn navigate_to_target_and_close(
     } else if !cleanup_result.tmux_window_killed {
         // Running outside and targets weren't killed yet (shouldn't happen normally)
         // but handle it for completeness
+        info!(
+            handle = source_handle,
+            target = target_window_name,
+            kind,
+            current_pane_id = ?mux.current_pane_id(),
+            active_pane_id = ?mux.active_pane_id(),
+            "cleanup:selecting target through fallback"
+        );
         let target = MuxHandle::new(mux, target_mode, prefix, target_window_name);
         target.select()?;
         info!(
