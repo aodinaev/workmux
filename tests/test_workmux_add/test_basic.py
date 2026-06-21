@@ -60,6 +60,34 @@ class TestWorktreeCreation:
 
         assert_window_exists(env, window_name)
 
+    @pytest.mark.tmux_only
+    def test_add_inserts_right_of_calling_window(
+        self, mux_server: MuxEnvironment, workmux_exe_path, mux_repo_path
+    ):
+        """Verifies that `workmux add` creates a window right of the caller."""
+        env = mux_server
+
+        write_workmux_config(mux_repo_path)
+        caller = "caller"
+        env.new_window(caller)
+        env.select_window(caller)
+
+        run_workmux_add(env, workmux_exe_path, mux_repo_path, "feature-existing")
+        env.select_window(caller)
+        run_workmux_add(env, workmux_exe_path, mux_repo_path, "feature-inserted")
+
+        windows = env.list_windows()
+        existing = get_window_name("feature-existing")
+        inserted = get_window_name("feature-inserted")
+
+        assert inserted in windows, f"Expected {inserted} in {windows}"
+        assert windows.index(inserted) == windows.index(caller) + 1, (
+            f"{inserted} should be immediately after {caller}. Windows: {windows}"
+        )
+        assert windows.index(inserted) < windows.index(existing), (
+            f"{inserted} should appear before {existing}. Windows: {windows}"
+        )
+
     def test_add_from_inside_worktree_creates_sibling_worktree(
         self, mux_server: MuxEnvironment, workmux_exe_path, mux_repo_path
     ):

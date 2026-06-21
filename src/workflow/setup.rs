@@ -197,11 +197,13 @@ pub fn setup_environment(
                         .context("Failed to create session")?
                     }
                 } else {
+                    let current_window_id = mux.current_window_id()?;
+                    let insertion_target = after_window.as_deref().or(current_window_id.as_deref());
                     mux.create_window(CreateWindowParams {
                         prefix,
                         name: target_window_name,
                         cwd: effective_working_dir,
-                        after_window: after_window.as_deref(),
+                        after_window: insertion_target,
                     })
                     .context("Failed to create window")?
                 };
