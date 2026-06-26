@@ -22,7 +22,9 @@ description: Release notes and version history for workmux
 
 # Changelog
 
-## Unreleased
+## v0.1.215 (2026-06-26)
+
+- Place new tmux windows from `workmux add` immediately beside the calling window, keeping new worktrees easy to find.
 
 ## v0.1.214 (2026-06-26)
 
