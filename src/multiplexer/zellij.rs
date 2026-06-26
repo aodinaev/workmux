@@ -220,6 +220,8 @@ impl ZellijBackend {
             title: Some(pane.title.clone()).filter(|t| !t.is_empty()),
             session: Self::session_name(),
             window: Some(pane.tab_name.clone()).filter(|t| !t.is_empty()),
+            session_id: None,
+            window_id: None,
         }
     }
 }

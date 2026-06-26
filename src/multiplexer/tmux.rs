@@ -23,7 +23,7 @@ use super::{Multiplexer, PaneHandshake, util};
 #[derive(Debug, Default)]
 pub struct TmuxBackend;
 
-const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{session_name}\t#{window_name}";
+const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{session_name}\t#{window_name}\t#{session_id}\t#{window_id}";
 
 fn parse_live_pane_line(line: &str) -> Option<(String, LivePaneInfo)> {
     let parts: Vec<&str> = line.split('\t').collect();
@@ -44,6 +44,14 @@ fn parse_live_pane_line(line: &str) -> Option<(String, LivePaneInfo)> {
             },
             session: Some(parts[5].to_string()),
             window: Some(parts[6].to_string()),
+            session_id: parts
+                .get(7)
+                .map(|value| value.to_string())
+                .filter(|value| !value.is_empty()),
+            window_id: parts
+                .get(8)
+                .map(|value| value.to_string())
+                .filter(|value| !value.is_empty()),
         },
     ))
 }

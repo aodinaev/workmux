@@ -875,6 +875,8 @@ mod tests {
                 title: None,
                 session: Some("work".to_string()),
                 window: Some("node".to_string()),
+                session_id: None,
+                window_id: None,
             },
         );
         live_panes.insert(
@@ -886,6 +888,8 @@ mod tests {
                 title: None,
                 session: Some("work".to_string()),
                 window: Some("node".to_string()),
+                session_id: None,
+                window_id: None,
             },
         );
         live_panes.insert(
@@ -897,6 +901,8 @@ mod tests {
                 title: None,
                 session: Some("work".to_string()),
                 window: Some("user-name".to_string()),
+                session_id: None,
+                window_id: None,
             },
         );
 

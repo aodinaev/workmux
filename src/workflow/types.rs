@@ -92,6 +92,8 @@ pub struct CleanupResult {
     pub tmux_window_killed: bool,
     pub worktree_removed: bool,
     pub local_branch_deleted: bool,
+    /// True when the source target is focused by the active client.
+    pub source_target_is_active: bool,
     /// The actual window name to close later (when running inside a duplicate window)
     pub window_to_close_later: Option<String>,
     pub window_target_to_close_later: Option<WindowTarget>,

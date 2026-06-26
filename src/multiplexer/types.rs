@@ -215,4 +215,10 @@ pub struct LivePaneInfo {
 
     /// Window name
     pub window: Option<String>,
+
+    /// Stable session ID for backends that expose one.
+    pub session_id: Option<String>,
+
+    /// Stable window ID for backends that expose one.
+    pub window_id: Option<String>,
 }
