@@ -24,13 +24,14 @@ description: Release notes and version history for workmux
 
 ## Unreleased
 
-- Add `workmux sidebar --position <left|top>` to choose sidebar placement when
-  enabling the sidebar, overriding the configured default for that toggle.
-- Add structured [named agent profiles](https://workmux.raine.dev/guide/agents#named-agents)
-  with separate `type`, `command`, `args`, and `env` fields, including support
-  for `env` values sourced from launch environment variables with `from_env`.
-  Named profiles can now be selected with `workmux add -a <name>` or used
-  directly in panes with [`<agent:name>`](https://workmux.raine.dev/guide/configuration#agent-placeholders).
+## v0.1.214 (2026-06-26)
+
+- Add `workmux rebase` to rebase a worktree onto its saved base branch, with automatic fallback to the configured main branch.
+- Add `workmux sidebar --position <left|top>` to choose sidebar placement when enabling the sidebar.
+- Add structured [named agent profiles](https://workmux.raine.dev/guide/agents#named-agents) with separate `type`, `command`, `args`, and `env` fields, including `from_env` values and `<agent:name>` pane placeholders.
+- Keep named agent profiles stable across repeated launches, so profile commands and arguments are not mutated between runs.
+- Preserve the current tmux focus when merging a worktree from an inactive window.
+- Place new tmux windows beside the current window for more predictable navigation.
 
 ## v0.1.213 (2026-06-12)
 
