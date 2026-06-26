@@ -2308,7 +2308,6 @@ underlying mechanics helps.
 - [Rust projects](#rust-projects)
 - [Port conflicts in monorepos](#port-conflicts-in-monorepos)
 - [Symlinks and `.gitignore` trailing slashes](#symlinks-and-gitignore-trailing-slashes)
-- [Local git ignores (`.git/info/exclude`) are not shared](#local-git-ignores-gitinfoexclude-are-not-shared)
 
 ### Gitignored files require configuration
 
@@ -2489,17 +2488,6 @@ To ignore both directories and symlinks, remove the trailing slash:
 - tests/venv/
 + tests/venv
 ```
-
-### Local git ignores (`.git/info/exclude`) are not shared
-
-The local git ignore file, `.git/info/exclude`, is specific to the main
-worktree's git directory and is not respected in other worktrees. Personal
-ignore patterns for your editor or temporary files may not apply in new
-worktrees, causing them to appear in `git status`.
-
-For personal ignores, use a global git ignore file. For project-specific ignores
-that are safe to share with your team, add them to the project's main
-`.gitignore` file.
 
 ## Tips
 
